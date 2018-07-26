@@ -1,12 +1,12 @@
 import time
 
-from ConvLSTM.hybrid_forecast_model import HybridForecastModel
+from ConvLSTM.global_forecast_model import GlobalForecastModel
 from ConvLSTM.config import *
 
 from utility.reader import read_data_map, construct_time_map2
 from utility.missing_value_processer import missing_check
 from utility.Utilities import *
-from ConvLSTM.config import root, dataset_path, site_map2
+from ConvLSTM.config import root, dataset_path, site_local_map
 
 #
 # ----- START: Parameters Declaration ----------------------------------------------------------------------------------
@@ -14,78 +14,12 @@ from ConvLSTM.config import root, dataset_path, site_map2
 
 # Define data loading parameters
 data_update = False
-
-#
-# ----------- Global data setting (data from EPA) -----------
-#
-global_feature_kind_shift = 6
-global_pollution_site_map2 = site_map2()
-
-# Notice that 'WIND_SPEED' must be the last feature and 'WIND_DIREC' must be the last second.
-global_pollution_kind = ['PM2.5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
-                         'PM2.5_x_O3', 'PM2.5_x_CO', 'PM2.5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP',
-                         'CO_x_NOx', 'WIND_SPEED', 'WIND_DIREC']
-global_target_kind = ['PM2.5', 'O3', 'NO', 'NO2', 'NOx']
-
-global_hyper_params = {
-    'num_filters': 16,
-    'kernel_size': (3, 3),
-    'regularizer': 1e-7,
-    'cnn_dropout': 0.5,
-    'r_dropout': 0.5,
-    'pool_size': (2, 2),
-    'epoch': 50,
-    'batch_size': 256,
-    'interval_hours': 1
-}
-
-global_train_seq_seg = [(36, 1)]  # [(12, 1), (24, 2), (48, 3), (72, 6)]
-global_train_seq_length = int(global_train_seq_seg[0][0] / global_train_seq_seg[0][1])
-for seg_idx in range(1, len(global_train_seq_seg)):
-    global_train_seq_length += int((global_train_seq_seg[seg_idx][0] -
-                                    global_train_seq_seg[seg_idx - 1][0]) / global_train_seq_seg[seg_idx][1])
-
-#
-# ----------- Local data setting (data from ) -----------
-#
-local_feature_kind_shift = 6
-local_pollution_site_map = site_local_map()
-
-# Notice that 'WIND_SPEED' must be the last feature and 'WIND_DIREC' must be the last second.
-local_pollution_kind = ['PM2.5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
-                        'PM2.5_x_O3', 'PM2.5_x_CO', 'PM2.5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP',
-                        'CO_x_NOx', 'WIND_SPEED', 'WIND_DIREC']
-local_target_kind = ['PM2.5']
-
-local_hyper_params = {
-    'num_filters': 16,
-    'kernel_size': (3, 3),
-    'regularizer': 1e-7,
-    'cnn_dropout': 0.5,
-    'r_dropout': 0.5,
-    'pool_size': (2, 2),
-    'epoch': 50,
-    'batch_size': 256,
-    'interval_hours': 1
-}
-
-local_train_seq_seg = [(36, 1)]  # [(12, 1), (24, 2), (48, 3), (72, 6)]
-local_train_seq_length = int(local_train_seq_seg[0][0] / local_train_seq_seg[0][1])
-for seg_idx in range(1, len(local_train_seq_seg)):
-    local_train_seq_length += int((local_train_seq_seg[seg_idx][0] -
-                                   local_train_seq_seg[seg_idx - 1][0]) / local_train_seq_seg[seg_idx][1])
-
-
-
-
-
-
 # Notice that 'WIND_SPEED' must be the last feature and 'WIND_DIREC' must be the last second.
 pollution_kind = ['PM2.5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
                   'PM2.5_x_O3', 'PM2.5_x_CO', 'PM2.5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP', 'CO_x_NOx',
                   'WIND_SPEED', 'WIND_DIREC']
 # target_kind = 'PM2.5'
-target_kind = ['PM2.5', 'O3', 'NO', 'NO2', 'NOx']
+target_kind = ['PM2.5']
 
 # Define target duration for training
 training_year = [2014, 2016]  # change format from   2014-2015   to   ['2014', '2015']
@@ -101,7 +35,6 @@ is_training = True  # True False
 hyper_params = {
         'num_filters': 16,
         'kernel_size': (3, 3),
-        'kernel_size2': (5, 5),
         'regularizer': 1e-7,
         'cnn_dropout': 0.5,
         'r_dropout': 0.5,
@@ -195,19 +128,19 @@ for target_site_keys in pollution_site_map2:
 
     # Load training data, where: size(X_train) = (data_size, map_l, map_w, map_h), not sequentialized yet.
     print('Preparing training dataset ..')
-    X_train = read_data_map(path=data_path, site=target_site, feature_selection=global_pollution_kind,
+    X_train = read_data_map(path=data_path, site=target_site, feature_selection=pollution_kind,
                             date_range=np.atleast_1d(training_year), beginning=training_duration[0],
                             finish=training_duration[-1], update=data_update)
     X_train = missing_check(X_train)
-    Y_train = np.array(X_train)[:, center_i, center_j, [6 + global_pollution_kind.index(i) for i in target_kind]]
+    Y_train = np.array(X_train)[:, center_i, center_j, [6 + pollution_kind.index(i) for i in target_kind]]
 
     # Load testing data, where: size(X_test) = (data_size, map_l, map_w, map_h), not sequentialized yet.
     print('Preparing testing dataset ..')
-    X_test = read_data_map(path=data_path, site=target_site, feature_selection=global_pollution_kind,
+    X_test = read_data_map(path=data_path, site=target_site, feature_selection=pollution_kind,
                            date_range=np.atleast_1d(testing_year), beginning=testing_duration[0],
                            finish=testing_duration[-1], update=data_update)
     X_test = missing_check(X_test)
-    Y_test = np.array(X_test)[:, center_i, center_j, [6 + global_pollution_kind.index(i) for i in target_kind]]
+    Y_test = np.array(X_test)[:, center_i, center_j, [6 + pollution_kind.index(i) for i in target_kind]]
 
     # Set end time of data loading
     final_time = time.time()
@@ -354,14 +287,8 @@ for target_site_keys in pollution_site_map2:
     # ----- END: Data Partition ----------------------------------------------------------------------------------------
     #
 
-    f_model = HybridForecastModel(global_pollution_kind, global_target_kind, global_feature_kind_shift,
-                                  global_train_seq_seg, global_hyper_params, global_target_site.shape,
-                                  local_pollution_kind, local_target_kind, local_feature_kind_shift,
-                                  local_train_seq_seg, local_hyper_params, local_target_site.shape,
-                                  output_form)
-
-    f_model = ForecastModel(pollution_kind, target_kind, target_site, feature_kind_shift,
-                            train_seq_seg, hyper_params, (X_train.shape[1], X_train.shape[2]). output_form)
+    f_model = GlobalForecastModel(pollution_kind, target_kind, target_site, feature_kind_shift,
+                                  train_seq_seg, hyper_params, (X_train.shape[1], X_train.shape[2]). output_form)
 
     model_nn_path = ("Ensemble_%s_training_%s_m%s_to_%s_m%s_interval_%s_%s"
                      % (target_site_name, training_year[0], training_start_point, training_year[-1],

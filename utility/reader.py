@@ -112,7 +112,7 @@ weather_site_name2no = {
 weather_site_no2name = {y: x for x, y in weather_site_name2no.items()}
 
 
-def pollution_to_pollution_no(pollution):
+def pollution_to_pollution_no_global(pollution):
     if pollution == 'SO2':return 0
     elif pollution == 'CO':return 1
     elif pollution == 'O3':return 2
@@ -139,8 +139,35 @@ def pollution_to_pollution_no(pollution):
         # None
 
 
-def read_data_map(path, site, feature_selection, date_range=[2014, 2015],
-                  beginning='1/1', finish='12/31', update=False):
+def pollution_to_pollution_no_local(pollution):
+    if pollution == 'SO2':return 0
+    elif pollution == 'CO':return 1
+    elif pollution == 'O3':return 2
+    elif pollution == 'PM10':return 3
+    elif pollution == 'PM2.5':return 4
+    elif pollution == 'NOx':return 5
+    elif pollution == 'NO':return 6
+    elif pollution == 'NO2':return 7
+    elif pollution == 'THC':return 8
+    elif pollution == 'NMHC':return 9
+    elif pollution == 'CH4':return 10
+    elif pollution == 'UVB':return 11
+    elif pollution == 'AMB_TEMP':return 12
+    elif pollution == 'RAINFALL':return 13
+    elif pollution == 'RH':return 14
+    elif pollution == 'WIND_SPEED':return 15
+    elif pollution == 'WIND_DIREC':return 16
+    elif pollution == 'WS_HR':return 17
+    elif pollution == 'WD_HR':return 18
+    elif pollution == 'PH_RAIN':return 19
+    elif pollution == 'RAIN_COND':return 20
+    else:
+        input("THis pollution(%s) hasn't been recorded." % pollution)
+        # None
+
+
+def read_global_data_map(path, site, feature_selection, date_range=[2014, 2015],
+                         beginning='1/1', finish='12/31', update=False):
 
     # input_shape = (train_seg_length, 5, 5, feature_dim)
     y_d_h_data = data_reader(path, int(date_range[0]), int(date_range[-1]), update)
@@ -220,7 +247,7 @@ def read_data_map(path, site, feature_selection, date_range=[2014, 2015],
                                     if feature_elem == 'WIND_DIREC':
                                         try:
                                             feature = float(y_d_h_data[str(year)][each_date]['pollution'][site_name][each_hour]
-                                                            [pollution_to_pollution_no(feature_elem)])
+                                                            [pollution_to_pollution_no_global(feature_elem)])
                                             if np.isnan(feature) or feature < 0:
                                                 feature_tensor[map_index[0], map_index[1], (5+feature_index)] = 'NaN'
                                                 feature_tensor[map_index[0], map_index[1], (5+feature_index+1)] = 'NaN'
@@ -244,7 +271,7 @@ def read_data_map(path, site, feature_selection, date_range=[2014, 2015],
                                             for i_elem in range(len(feature_elems)):
                                                 features[i_elem] = float(
                                                     y_d_h_data[str(year)][each_date]['pollution'][site_name][each_hour]
-                                                    [pollution_to_pollution_no(feature_elems[i_elem])])
+                                                    [pollution_to_pollution_no_global(feature_elems[i_elem])])
                                                 mul_feature *= features[i_elem]
                                             if [i for i in features if np.isnan(i)] or [i for i in features if i < 0]:
                                                 feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = 'NaN'
@@ -261,7 +288,7 @@ def read_data_map(path, site, feature_selection, date_range=[2014, 2015],
                                     else:
                                         try:
                                             feature = float(y_d_h_data[str(year)][each_date]['pollution'][site_name][each_hour]
-                                                            [pollution_to_pollution_no(feature_elem)])
+                                                            [pollution_to_pollution_no_global(feature_elem)])
                                             if np.isnan(feature) or feature < 0:
                                                 feature_tensor[map_index[0], map_index[1], (5+feature_index)] = 'NaN'
                                                 num_of_missing += 1
@@ -348,7 +375,7 @@ def read_data_sets(sites=['中山', '古亭', '士林', '松山', '萬華'], dat
                             else:
                                 for feature_elem in feature_selection:
                                     try:
-                                        feature = float(y_d_h_data[each_year][each_date]['pollution'][site][each_hour][pollution_to_pollution_no(feature_elem)])
+                                        feature = float(y_d_h_data[each_year][each_date]['pollution'][site][each_hour][pollution_to_pollution_no_global(feature_elem)])
                                         if feature < 0:
                                             feature_vector.append('NaN')
                                             num_of_missing += 1

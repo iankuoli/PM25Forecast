@@ -69,6 +69,9 @@ def main(configure):
     #
     # ----------- Global data setting (data from EPA) -----------
     #
+    global_feature_kind_shift = 6
+    global_pollution_site_map2 = site_map2()
+
     # Notice that 'WIND_SPEED' must be the last feature and 'WIND_DIREC' must be the last second.
     global_pollution_kind = ['PM2.5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
                              'PM2.5_x_O3', 'PM2.5_x_CO', 'PM2.5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP',
@@ -97,6 +100,9 @@ def main(configure):
     #
     # ----------- Local data setting (data from ) -----------
     #
+    local_feature_kind_shift = 6
+    local_pollution_site_map = site_local_map()
+
     # Notice that 'WIND_SPEED' must be the last feature and 'WIND_DIREC' must be the last second.
     local_pollution_kind = ['PM2.5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
                             'PM2.5_x_O3', 'PM2.5_x_CO', 'PM2.5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP',
@@ -127,23 +133,21 @@ def main(configure):
 
     feature_kind_shift = 6
     interval_hours_set = [1, 3, 6, 12]
-    pollution_site_map2 = site_map2()
     for interval_hours in interval_hours_set:
         for target_site_keys in pollution_site_map2:
-            target_site = pollution_site_map2[target_site_keys]
-            print(target_site.site_name)
+            global_target_site = global_pollution_site_map2[target_site_keys]
+            print(global_target_site.site_name)
+            local_target_site = local_pollution_site_map[0]
 
             hyper_params['interval_hours'] = interval_hours
-            f_model = HybridForecastModel(pollution_kind, target_kind, target_site, feature_kind_shift,
-                                          train_seq_seg, hyper_params, output_form)
 
             f_model = HybridForecastModel(global_pollution_kind, global_target_kind, global_feature_kind_shift,
-                                          global_train_seq_seg, global_hyper_params, global_input_map_shape,
+                                          global_train_seq_seg, global_hyper_params, global_target_site.shape,
                                           local_pollution_kind, local_target_kind, local_feature_kind_shift,
-                                          local_train_seq_seg, local_hyper_params, local_input_map_shape,
+                                          local_train_seq_seg, local_hyper_params, local_target_site.shape,
                                           output_form)
 
-            dict_forecasters[(target_site.site_name, interval_hours)] = f_model
+            dict_forecasters[(global_target_site.site_name, local_target_site.site_name, interval_hours)] = f_model
 
     # service
     serv = make_app(dict_data, dict_forecasters)
