@@ -133,7 +133,7 @@ def data_reader(path, start_year, last_year, update=False):
             not_exit_flag += 1
             print('Reading %d data by cPickle .. ' % start_year)
             fr = open(path+'cPickle/pollution_and_weather_data_'+str(start_year), 'rb')
-            y_d_h_data[str(start_year)] = pickle.load(fr)
+            y_d_h_data[str(start_year)] = pickle.load(fr, encoding='utf-8')
             fr.close()
             start_year += 1
         else:

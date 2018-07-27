@@ -260,8 +260,8 @@ for target_site_keys in pollution_site_map2:
     Y_train = Y_train[:-800]
 
     # Generate model_input2 from model_input
-    X_train2 = X_train[:, :, 2, 2, :].reshape(X_train.shape[0], X_train.shape[1]*X_train.shape[4])
-    X_test2 = X_test[:, :, 2, 2, :].reshape(X_test.shape[0], X_test.shape[1] * X_test.shape[4])
+    #X_train2 = X_train[:, :, 2, 2, :].reshape(X_train.shape[0], X_train.shape[1]*X_train.shape[4])
+    #X_test2 = X_test[:, :, 2, 2, :].reshape(X_test.shape[0], X_test.shape[1] * X_test.shape[4])
 
     # Generate model_input3 from model_input
     X_train3 = X_train[:, :, 2, 2, :]
@@ -288,7 +288,7 @@ for target_site_keys in pollution_site_map2:
     #
 
     f_model = GlobalForecastModel(pollution_kind, target_kind, target_site, feature_kind_shift,
-                                  train_seq_seg, hyper_params, (X_train.shape[1], X_train.shape[2]). output_form)
+                                  train_seq_seg, hyper_params, (X_train.shape[2], X_train.shape[3]), output_form)
 
     model_nn_path = ("Ensemble_%s_training_%s_m%s_to_%s_m%s_interval_%s_%s"
                      % (target_site_name, training_year[0], training_start_point, training_year[-1],
@@ -302,6 +302,6 @@ for target_site_keys in pollution_site_map2:
                            % (target_site, training_year[0], training_start_point, training_year[-1],
                               training_end_point, interval_hours))
 
-    f_model.train(X_train_XGB, X_train, X_train2, X_train3, Y_train,
-                  X_test, X_test2, X_test3, Y_test,
+    f_model.train(X_train_XGB, X_train, X_train3, Y_train,
+                  X_test, X_test3, Y_test,
                   model_nn_path, model_xgb_path, model_ensemble_path)

@@ -3,7 +3,7 @@ import os
 
 #root_path = '/media/clliao/006a3168-df49-4b0a-a874-891877a88870/clliao/workspace/python/weather_prediction/ensemble_regression/'
 root_path = os.getcwd() + '/ConvLSTM/'
-data_path = os.getenv("HOME") + '/Dataset/AirQuality/'
+data_path = os.getenv("HOME") + '/dataset/AirQuality_EPA/'
 
 
 def root():

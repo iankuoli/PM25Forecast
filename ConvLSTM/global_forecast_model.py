@@ -41,7 +41,7 @@ class GlobalForecastModel:
         self.interval_hours = hyper_params['interval_hours']
         self.input_map_shape = input_map_shape
 
-        self.forecast = np.zeros(len(self.interval_hours))
+        self.forecast = 0
 
         # Define the output form
         # output_form = (0, 80, 1, len(self.target_kind))     # Regression (min, max, num_of_slice, num_of_obj)
@@ -66,28 +66,29 @@ class GlobalForecastModel:
         input_shape = (self.train_seq_length, self.input_map_shape[0], self.input_map_shape[1], input_size)
 
         # Input for ConvLSTM: 5D tensor with shape: (samples_index, sequence_index, row, col, feature/channel)
-        model_input = Input(shape=input_shape, dtype='float32')
+        model_input_convLSTM = Input(shape=input_shape, dtype='float32')
 
         # Input for DNN: 2D matrix
         #model_input2 = Input(shape=(self.train_seq_length * input_size,), dtype='float32')
 
         # Input for LSTM: 3D tensor: (samples_index, sequence_index, feature)
-        model_input3 = Input(shape=(self.train_seq_length, input_size), dtype='float32')
+        model_input_LSTM = Input(shape=(self.train_seq_length, input_size), dtype='float32')
 
         # Layer 1-1: ConvLSTM with kernel size (3, 3)
-        predict_map = Bidirectional(ConvLSTM2D(self.num_filters, self.kernel_size, padding='valid', activation='tanh',
+        predict_map = Bidirectional(ConvLSTM2D(self.num_filters, self.kernel_size, padding='same', activation='tanh',
+                                               return_sequences=True,
                                                recurrent_activation='hard_sigmoid', use_bias=True,
                                                unit_forget_bias=True,
                                                kernel_regularizer=l2(self.regularizer),
                                                recurrent_regularizer=l2(self.regularizer),
                                                bias_regularizer=l2(self.regularizer),
                                                activity_regularizer=l2(self.regularizer),
-                                               dropout=self.cnn_dropout, recurrent_dropout=self.r_dropout))(model_input)
-        predict_map = MaxPooling2D(pool_size=self.pool_size)(predict_map)
+                                               dropout=self.cnn_dropout, recurrent_dropout=self.r_dropout))(model_input_convLSTM)
+        #predict_map = MaxPooling2D(pool_size=self.pool_size)(predict_map)
         predict_vec = Flatten()(predict_map)
 
         # Layer 1-2: ConvLSTM with kernel size (3, 3)
-        predict_map2 = Bidirectional(ConvLSTM2D(self.num_filters, self.kernel_size, padding='valid', activation='tanh',
+        predict_map2 = Bidirectional(ConvLSTM2D(self.num_filters, self.kernel_size, padding='same', activation='tanh',
                                                 recurrent_activation='hard_sigmoid', use_bias=True,
                                                 unit_forget_bias=True,
                                                 kernel_regularizer=l2(self.regularizer),
@@ -101,7 +102,7 @@ class GlobalForecastModel:
         # LSTM
         predict_map3 = BatchNormalization(beta_regularizer=None, epsilon=0.001,
                                           beta_initializer="zero", gamma_initializer="one",
-                                          weights=None, gamma_regularizer=None, momentum=0.99, axis=-1)(model_input3)
+                                          weights=None, gamma_regularizer=None, momentum=0.99, axis=-1)(model_input_LSTM)
         predict_map3 = Bidirectional(LSTM(10, kernel_regularizer=l2(self.regularizer),
                                           recurrent_regularizer=l2(self.regularizer),
                                           bias_regularizer=l2(self.regularizer), recurrent_dropout=0.8))(predict_map3)
@@ -126,7 +127,7 @@ class GlobalForecastModel:
         output_layer = Dense(output_size, kernel_regularizer=l2(self.regularizer),
                              bias_regularizer=l2(self.regularizer))(output_layer)
 
-        self.forecast_model = Model(inputs=[model_input, model_input3], outputs=output_layer)
+        self.forecast_model = Model(inputs=[model_input_convLSTM, model_input_LSTM], outputs=output_layer)
 
         if output_form[2] == 1:
             self.forecast_model.compile(loss=keras.losses.mean_squared_error,
@@ -170,7 +171,7 @@ class GlobalForecastModel:
     #
     # Model Training:
     #
-    def train(self, x_train_xgb, x_train_1, x_train_2, x_train_3, y_train, x_test_1, x_test_2, x_test_3, y_test,
+    def train(self, x_train_xgb, x_train_convLSTM, x_train_LSTM, y_train, x_test_convLSTM, x_test_LSTM, y_test,
               model_nn_path, model_xgb_path, model_ensemble_path):
 
         print("Train NN ...")
@@ -179,11 +180,11 @@ class GlobalForecastModel:
         #
         # ------ START: Train NN model ---------------------------------------------------------------------------------
         #
-        self.forecast_model.fit(x=[x_train_1, x_train_2, x_train_3],
+        self.forecast_model.fit(x=[x_train_convLSTM, x_train_LSTM],
                                 y=y_train,
                                 batch_size=self.batch_size,
                                 epochs=self.epoch,
-                                validation_data=([x_test_1, x_test_2, x_test_3], y_test),
+                                validation_data=([x_test_convLSTM, x_test_LSTM], y_test),
                                 shuffle=True,
                                 callbacks=[EarlyStopping(monitor='val_loss', min_delta=0,
                                                          patience=3, verbose=0, mode='auto'),
