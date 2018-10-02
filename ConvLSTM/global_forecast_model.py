@@ -4,7 +4,7 @@ from keras.layers.normalization import BatchNormalization
 from keras.models import Model
 from keras.regularizers import l2
 from keras.callbacks import ModelCheckpoint, EarlyStopping
-import xgboost as xgb
+#import xgboost as xgb
 
 import pickle
 import time
@@ -76,7 +76,7 @@ class GlobalForecastModel:
 
         # Layer 1-1: ConvLSTM with kernel size (3, 3)
         predict_map = Bidirectional(ConvLSTM2D(self.num_filters, self.kernel_size, padding='same', activation='tanh',
-                                               return_sequences=True,
+                                               return_sequences=False,
                                                recurrent_activation='hard_sigmoid', use_bias=True,
                                                unit_forget_bias=True,
                                                kernel_regularizer=l2(self.regularizer),
@@ -84,8 +84,8 @@ class GlobalForecastModel:
                                                bias_regularizer=l2(self.regularizer),
                                                activity_regularizer=l2(self.regularizer),
                                                dropout=self.cnn_dropout, recurrent_dropout=self.r_dropout))(model_input_convLSTM)
-        #predict_map = MaxPooling2D(pool_size=self.pool_size)(predict_map)
-        predict_vec = Flatten()(predict_map)
+        predict_map = MaxPooling2D(pool_size=self.pool_size)(predict_map)
+        #predict_vec = Flatten()(predict_map)
 
         # Layer 1-2: ConvLSTM with kernel size (3, 3)
         predict_map2 = Bidirectional(ConvLSTM2D(self.num_filters, self.kernel_size, padding='same', activation='tanh',
@@ -108,8 +108,8 @@ class GlobalForecastModel:
                                           bias_regularizer=l2(self.regularizer), recurrent_dropout=0.8))(predict_map3)
 
         # Concatenation
-        predict_map0 = concatenate([predict_vec, predict_vec2, predict_map3])
-        # predict_map0 = concatenate([predict_vec, predict_vec2, predict_map4, model_input2])
+        #predict_map0 = concatenate([predict_vec, predict_vec2, predict_map3])
+        predict_map0 = concatenate([predict_vec2, predict_map3])
 
         # output layer
         output_layer = BatchNormalization(beta_regularizer=None, epsilon=0.001,
@@ -198,25 +198,25 @@ class GlobalForecastModel:
         #
         # ------ START: Train XGB model --------------------------------------------------------------------------------
         #
-        print('Train XGB ...')
-        self.xgb_model = xgb.XGBRegressor().fit(x_train_xgb, y_train[:, 0])
-
-        with open(model_xgb_path, 'wb') as fw:
-            pickle.dump(self.xgb_model, fw)
+        # print('Train XGB ...')
+        # self.xgb_model = xgb.XGBRegressor().fit(x_train_xgb, y_train[:, 0])
+        #
+        # with open(model_xgb_path, 'wb') as fw:
+        #    pickle.dump(self.xgb_model, fw)
         #
         # ------ END: Train XGB model ----------------------------------------------------------------------------------
 
         #
         # ------ START: Train ensemble model ---------------------------------------------------------------------------
         #
-        print('Stacking ...')
-        xgb_predict = self.xgb_model.predict(x_train_xgb).reshape(len(x_train_xgb), 1)
-        nn_predict = self.forecast_model.predict([x_train_1, x_train_2, x_train_3])
-        x_train_ensemble = np.hstack((x_train_xgb, xgb_predict, nn_predict))
-        self.ensemble_model = xgb.XGBRegressor().fit(x_train_ensemble, y_train[:, 0])
+        # print('Stacking ...')
+        # xgb_predict = self.xgb_model.predict(x_train_xgb).reshape(len(x_train_xgb), 1)
+        # nn_predict = self.forecast_model.predict([x_train_1, x_train_2, x_train_3])
+        # x_train_ensemble = np.hstack((x_train_xgb, xgb_predict, nn_predict))
+        # self.ensemble_model = xgb.XGBRegressor().fit(x_train_ensemble, y_train[:, 0])
 
-        with open(model_ensemble_path, 'wb') as fw:
-            pickle.dump(self.ensemble_model, fw)
+        # with open(model_ensemble_path, 'wb') as fw:
+        #    pickle.dump(self.ensemble_model, fw)
         #
         # ------ END: Train ensemble model -----------------------------------------------------------------------------
 

@@ -6,6 +6,8 @@ from keras.regularizers import l2
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 import xgboost as xgb
 
+import sklearn.multioutput.MultiOutputRegressor as MOR
+
 import pickle
 import time
 import numpy as np
@@ -19,7 +21,7 @@ class HybridForecastModel:
     #
     # Initialize forecast model and declare LSTM & ConvLSTM model structures
     #
-    def __init__(self, target_site,
+    def __init__(self, target_site, is_global_pretrained, is_local_pretrained,
                  global_pollution_kind, global_target_kind, global_feature_kind_shift,
                  global_train_seq_seg, global_hyper_params, global_input_map_shape,
                  local_pollution_kind, local_target_kind, local_feature_kind_shift,
@@ -28,6 +30,8 @@ class HybridForecastModel:
 
         # Target site
         self.target_site = target_site
+        self.is_global_pretrained = is_global_pretrained
+        self.is_local_pretrained = is_local_pretrained
 
         # Global hyper-parameters
         self.global_pollution_kind = global_pollution_kind
@@ -160,11 +164,14 @@ class HybridForecastModel:
         global_output_layer = Dense(output_size, kernel_regularizer=l2(self.global_regularizer),
                                     bias_regularizer=l2(self.global_regularizer))(global_output_layer)
 
-        self.global_model = Model(inputs=[global_model_input, global_model_input2], outputs=global_output_layer)
+        self.global_model = Model(inputs=[global_model_input, global_model_input2],
+                                  outputs=global_output_layer)
 
         if output_form[2] == 1:
+            # Regression problem
             self.global_model.compile(loss=keras.losses.mean_squared_error, optimizer='nadam', metrics=['accuracy'])
         else:
+            # Classification problem
             self.global_model.compile(loss=keras.losses.categorical_crossentropy, optimizer='nadam', metrics=['accuracy'])
         #
         # ----- END: Global Models (LSTM & ConvLSTM) Definition --------------------------------------------------------
@@ -226,7 +233,7 @@ class HybridForecastModel:
                                                 recurrent_dropout=0.8))(local_predict_map3)
 
         # Concatenation
-        local_predict_map0 = concatenate([local_predict_vec, local_predict_vec2, local_predict_map3])
+        local_predict_map0 = concatenate([local_predict_vec, local_predict_vec2, local_predict_map3, global_output_layer])
 
         # output layer
         local_output_layer = BatchNormalization(beta_regularizer=None, epsilon=0.001,
@@ -246,11 +253,14 @@ class HybridForecastModel:
         local_output_layer = Dense(output_size, kernel_regularizer=l2(self.local_regularizer),
                                    bias_regularizer=l2(self.local_regularizer))(local_output_layer)
 
-        self.local_model = Model(inputs=[local_model_input, local_model_input2], outputs=local_output_layer)
+        self.local_model = Model(inputs=[local_model_input, local_model_input2, global_output_layer],
+                                 outputs=local_output_layer)
 
         if output_form[2] == 1:
+            # Regression problem
             self.local_model.compile(loss=keras.losses.mean_squared_error, optimizer='nadam', metrics=['accuracy'])
         else:
+            # Classification problem
             self.local_model.compile(loss=keras.losses.categorical_crossentropy, optimizer='nadam',
                                      metrics=['accuracy'])
         #
@@ -263,10 +273,10 @@ class HybridForecastModel:
     #
     # Load Model: load LSTM, ConvLSTM, XGB and Ensemble model
     #
-    def load_model(self, nn_model_path, xgb_model_path, ens_model_path):
+    def load_model(self, local_model_path, xgb_model_path, ens_model_path):
 
         print('loading model ..')
-        self.ConvLSTM_model.load_weights(nn_model_path)
+        self.local_model.load_weights(local_model_path)
 
         with open(xgb_model_path, 'rb') as fr:
             self.xgb_model = pickle.load(fr)
@@ -277,11 +287,12 @@ class HybridForecastModel:
     #
     # Model Inference:
     #
-    def inference(self, x_test_xgb, x_test_1, x_test_2, x_test_3):
+    def inference(self, x_test_xgb, x_test_global, x_test_global2, x_test_local, x_test_local2):
 
         xgb_predict = self.xgb_model.predict(x_test_xgb)
-        nn_predict = self.ConvLSTM_model.predict([x_test_1, x_test_2, x_test_3])
-        final_predict = self.ensemble_model.predict(np.hstack((x_test_xgb, xgb_predict, nn_predict)))
+        global_nn_predict = self.global_model.predict([x_test_global, x_test_global2])
+        local_nn_predict = self.local_model.predict([x_test_local, x_test_local2])
+        final_predict = self.ensemble_model.predict(np.hstack((x_test_xgb, xgb_predict, global_nn_predict, local_nn_predict)))
         norm_predict = self.mean_y_train[0] + self.std_y_train[0] * final_predict
 
         return norm_predict
@@ -289,41 +300,70 @@ class HybridForecastModel:
     #
     # Model Training:
     #
-    def train(self, x_train_xgb, x_train_1, x_train_2, x_train_3, y_train, x_test_1, x_test_2, x_test_3, y_test,
+    def train(self, x_train_xgb,
+              x_train_global, x_train_global2, x_train_local, x_train_local2, y_train_global, y_train_local,
+              x_test_global, x_test_global2, x_test_local, x_test_local2, y_test,
               model_nn_path, model_xgb_path, model_ensemble_path):
 
         print("Train NN ...")
         start_time = time.time()
 
-        # ------ START: Train NN model ---------------------------------------------------------------------------------
-        self.ConvLSTM_model.fit(x=[x_train_1, x_train_2, x_train_3],
-                                y=y_train,
-                                batch_size=self.batch_size,
-                                epochs=self.epoch,
-                                validation_data=([x_test_1, x_test_2, x_test_3], y_test),
-                                shuffle=True,
-                                callbacks=[EarlyStopping(monitor='val_loss', min_delta=0,
-                                                         patience=3, verbose=0, mode='auto'),
-                                           ModelCheckpoint(model_nn_path, monitor='val_loss', verbose=0,
-                                                           save_best_only=True, save_weights_only=True,
-                                                           mode='auto', period=1)])
-        self.ConvLSTM_model.save_weights(model_nn_path, overwrite=True)
-        # ------ END: Train NN model -----------------------------------------------------------------------------------
+        #
+        # ------ START: Train global model -----------------------------------------------------------------------------
+        if self.is_global_pretrained:
+            self.global_model.fit(x=[x_train_global,
+                                     x_train_global2],
+                                  y=y_train_global,
+                                  batch_size=self.batch_size,
+                                  epochs=self.epoch,
+                                  validation_data=([x_test_global, x_test_global2], y_test),
+                                  shuffle=True,
+                                  callbacks=[EarlyStopping(monitor='val_loss', min_delta=0,
+                                                           patience=3, verbose=0, mode='auto'),
+                                             ModelCheckpoint(model_nn_path, monitor='val_loss', verbose=0,
+                                                             save_best_only=True, save_weights_only=True,
+                                                             mode='auto', period=1)])
+            self.global_model.save_weights(model_nn_path, overwrite=True)
+        # ------ END: Train global model -------------------------------------------------------------------------------
 
+        #
+        # ------ START: Train local model ------------------------------------------------------------------------------
+        if self.is_local_pretrained:
+            self.local_model.fit(x=[x_train_local,
+                                    x_train_local2,
+                                    self.global_model.predict([x_train_global, x_train_global2])],
+                                 y=y_train_local,
+                                 batch_size=self.batch_size,
+                                 epochs=self.epoch,
+                                 validation_data=([x_test_local, x_test_local2], y_test),
+                                 shuffle=True,
+                                 callbacks=[EarlyStopping(monitor='val_loss', min_delta=0,
+                                                          patience=3, verbose=0, mode='auto'),
+                                            ModelCheckpoint(model_nn_path, monitor='val_loss', verbose=0,
+                                                            save_best_only=True, save_weights_only=True,
+                                                            mode='auto', period=1)])
+            self.local_model.save_weights(model_nn_path, overwrite=True)
+        # ------ END: Train local model --------------------------------------------------------------------------------
+
+        #
         # ------ START: Train XGB model --------------------------------------------------------------------------------
         print('Train XGB ...')
-        self.xgb_model = xgb.XGBRegressor().fit(x_train_xgb, y_train[:, 0])
+        # self.xgb_model = xgb.XGBRegressor().fit(x_train_xgb, y_train_local[:, 0])
+        self.xgb_model = MOR(xgb.XGBRegressor(objective='reg:linear')).fit(x_train_xgb, y_train_local)
 
         with open(model_xgb_path, 'wb') as fw:
             pickle.dump(self.xgb_model, fw)
         # ------ END: Train XGB model ----------------------------------------------------------------------------------
 
+        #
         # ------ START: Train ensemble model ---------------------------------------------------------------------------
         print('Stacking ...')
         xgb_predict = self.xgb_model.predict(x_train_xgb).reshape(len(x_train_xgb), 1)
-        nn_predict = self.ConvLSTM_model.predict([x_train_1, x_train_2, x_train_3])
-        x_train_ensemble = np.hstack((x_train_xgb, xgb_predict, nn_predict))
-        self.ensemble_model = xgb.XGBRegressor().fit(x_train_ensemble, y_train[:, 0])
+        global_nn_predict = self.global_model.predict([x_train_global, x_train_global2])
+        local_nn_predict = self.global_model.predict([x_train_local, x_train_local2])
+        x_train_ensemble = np.hstack((x_train_xgb, xgb_predict, global_nn_predict, local_nn_predict))
+        # self.ensemble_model = xgb.XGBRegressor().fit(x_train_ensemble, y_train_local[:, 0])
+        self.ensemble_model = MOR(xgb.XGBRegressor(objective='reg:linear')).fit(x_train_ensemble, y_train_local)
 
         with open(model_ensemble_path, 'wb') as fw:
             pickle.dump(self.ensemble_model, fw)
