@@ -5,8 +5,7 @@ from keras.models import Model, Sequential
 from keras.regularizers import l2
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 import xgboost as xgb
-
-import sklearn.multioutput.MultiOutputRegressor as MOR
+from sklearn.multioutput import MultiOutputRegressor
 
 import pickle
 import time
@@ -186,7 +185,7 @@ class HybridForecastModel:
             self.local_pollution_kind)
         local_input_size = local_input_size + self.local_feature_kind_shift
         local_input_shape = (self.local_train_seq_length,
-                              self.local_input_map_shape[0], self.local_input_map_shape[1], local_input_size)
+                             self.local_input_map_shape[0], self.local_input_map_shape[1], local_input_size)
 
         # Input for ConvLSTM: 5D tensor with shape: (samples_index, sequence_index, row, col, feature/channel)
         local_model_input = Input(shape=local_input_shape, dtype='float32')
@@ -271,11 +270,13 @@ class HybridForecastModel:
         print('Finish building the forecast model...')
 
     #
-    # Load Model: load LSTM, ConvLSTM, XGB and Ensemble model
+    # Load Model: load global NN model, local NN model, XGB and Ensemble model
     #
-    def load_model(self, local_model_path, xgb_model_path, ens_model_path):
+    def load_model(self, global_model_path, local_model_path, xgb_model_path, ens_model_path):
 
         print('loading model ..')
+
+        self.global_model.load_weights(global_model_path)
         self.local_model.load_weights(local_model_path)
 
         with open(xgb_model_path, 'rb') as fr:
@@ -291,7 +292,7 @@ class HybridForecastModel:
 
         xgb_predict = self.xgb_model.predict(x_test_xgb)
         global_nn_predict = self.global_model.predict([x_test_global, x_test_global2])
-        local_nn_predict = self.local_model.predict([x_test_local, x_test_local2])
+        local_nn_predict = self.local_model.predict([x_test_local, x_test_local2, global_nn_predict])
         final_predict = self.ensemble_model.predict(np.hstack((x_test_xgb, xgb_predict, global_nn_predict, local_nn_predict)))
         norm_predict = self.mean_y_train[0] + self.std_y_train[0] * final_predict
 
@@ -301,55 +302,61 @@ class HybridForecastModel:
     # Model Training:
     #
     def train(self, x_train_xgb,
-              x_train_global, x_train_global2, x_train_local, x_train_local2, y_train_global, y_train_local,
-              x_test_global, x_test_global2, x_test_local, x_test_local2, y_test,
-              model_nn_path, model_xgb_path, model_ensemble_path):
+              x_train_global, x_train_global2, x_train_local, x_train_local2,
+              y_train_global, y_train_local,
+              x_test_global, x_test_global2, x_test_local, x_test_local2,
+              y_test_global, y_test_local,
+              global_model_path, local_model_path, model_xgb_path, model_ensemble_path):
 
         print("Train NN ...")
         start_time = time.time()
 
         #
         # ------ START: Train global model -----------------------------------------------------------------------------
-        if self.is_global_pretrained:
+        if not self.is_global_pretrained:
             self.global_model.fit(x=[x_train_global,
                                      x_train_global2],
                                   y=y_train_global,
                                   batch_size=self.batch_size,
                                   epochs=self.epoch,
-                                  validation_data=([x_test_global, x_test_global2], y_test),
+                                  validation_data=([x_test_global,
+                                                    x_test_global2],
+                                                   y_test_global),
                                   shuffle=True,
                                   callbacks=[EarlyStopping(monitor='val_loss', min_delta=0,
                                                            patience=3, verbose=0, mode='auto'),
-                                             ModelCheckpoint(model_nn_path, monitor='val_loss', verbose=0,
+                                             ModelCheckpoint(global_model_path, monitor='val_loss', verbose=0,
                                                              save_best_only=True, save_weights_only=True,
                                                              mode='auto', period=1)])
-            self.global_model.save_weights(model_nn_path, overwrite=True)
+            self.global_model.save_weights(global_model_path, overwrite=True)
         # ------ END: Train global model -------------------------------------------------------------------------------
 
         #
         # ------ START: Train local model ------------------------------------------------------------------------------
-        if self.is_local_pretrained:
+        if not self.is_local_pretrained:
             self.local_model.fit(x=[x_train_local,
                                     x_train_local2,
                                     self.global_model.predict([x_train_global, x_train_global2])],
                                  y=y_train_local,
                                  batch_size=self.batch_size,
                                  epochs=self.epoch,
-                                 validation_data=([x_test_local, x_test_local2], y_test),
+                                 validation_data=([x_test_local,
+                                                   x_test_local2,
+                                                   self.global_model.predict([x_test_global, x_test_global2])],
+                                                  y_test_local),
                                  shuffle=True,
                                  callbacks=[EarlyStopping(monitor='val_loss', min_delta=0,
                                                           patience=3, verbose=0, mode='auto'),
-                                            ModelCheckpoint(model_nn_path, monitor='val_loss', verbose=0,
+                                            ModelCheckpoint(local_model_path, monitor='val_loss', verbose=0,
                                                             save_best_only=True, save_weights_only=True,
                                                             mode='auto', period=1)])
-            self.local_model.save_weights(model_nn_path, overwrite=True)
+            self.local_model.save_weights(local_model_path, overwrite=True)
         # ------ END: Train local model --------------------------------------------------------------------------------
 
         #
         # ------ START: Train XGB model --------------------------------------------------------------------------------
         print('Train XGB ...')
-        # self.xgb_model = xgb.XGBRegressor().fit(x_train_xgb, y_train_local[:, 0])
-        self.xgb_model = MOR(xgb.XGBRegressor(objective='reg:linear')).fit(x_train_xgb, y_train_local)
+        self.xgb_model = MultiOutputRegressor(xgb.XGBRegressor(objective='reg:linear')).fit(x_train_xgb, y_train_local)
 
         with open(model_xgb_path, 'wb') as fw:
             pickle.dump(self.xgb_model, fw)
@@ -362,8 +369,7 @@ class HybridForecastModel:
         global_nn_predict = self.global_model.predict([x_train_global, x_train_global2])
         local_nn_predict = self.global_model.predict([x_train_local, x_train_local2])
         x_train_ensemble = np.hstack((x_train_xgb, xgb_predict, global_nn_predict, local_nn_predict))
-        # self.ensemble_model = xgb.XGBRegressor().fit(x_train_ensemble, y_train_local[:, 0])
-        self.ensemble_model = MOR(xgb.XGBRegressor(objective='reg:linear')).fit(x_train_ensemble, y_train_local)
+        self.ensemble_model = MultiOutputRegressor(xgb.XGBRegressor(objective='reg:linear')).fit(x_train_ensemble, y_train_local)
 
         with open(model_ensemble_path, 'wb') as fw:
             pickle.dump(self.ensemble_model, fw)
