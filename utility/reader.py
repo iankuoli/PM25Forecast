@@ -1,12 +1,21 @@
 # _*_ coding: utf-8 _*_
-
-from utility.data_reader import data_reader
-from utility.feature_processor import time_to_angle, return_weekday, data_coordinate_angle, convert_polar_to_cartesian
-from ConvLSTM.config import root
+import datetime
+import os
+import pickle
 import numpy as np
+import MySQLdb
+
+from utility.data_reader import data_reader, local_data_reader, global_data_reader, db_to_dict
+from utility.feature_processor import time_to_angle, return_weekday, data_coordinate_angle, convert_polar_to_cartesian
+from ConvLSTM.config import root, def_nan_signal, pollution_site_map2, db_config, pollution_site_local_map
+from MySQL.connMySQL import load_db
+
 
 root_path = root()
 
+nan_signal = def_nan_signal()  # 'NaN' or np.nan
+
+"""
 num_of_pollution_data = 21
 num_of_weather_data = 13
 
@@ -166,6 +175,8 @@ def pollution_to_pollution_no_local(pollution):
         # None
 
 
+# old version (y_d_h_data: year-month-day-site<list of hour>)
+
 def read_global_data_map(path, site, feature_selection, date_range=[2014, 2015],
                          beginning='1/1', finish='12/31', update=False):
 
@@ -236,8 +247,8 @@ def read_global_data_map(path, site, feature_selection, date_range=[2014, 2015],
 
                             # Set feature vector
                             if not (site_name in y_d_h_data[str(year)][each_date]['pollution']):
-                                # All features should be set to 'NaN'
-                                feature_tensor[map_index[0], map_index[1], 6:-1] = 'NaN'
+                                # All features should be set to nan_signal
+                                feature_tensor[map_index[0], map_index[1], 6:-1] = nan_signal
                                 num_of_missing += len(feature_selection)
                                 total_number += len(feature_selection)
                             else:
@@ -249,8 +260,8 @@ def read_global_data_map(path, site, feature_selection, date_range=[2014, 2015],
                                             feature = float(y_d_h_data[str(year)][each_date]['pollution'][site_name][each_hour]
                                                             [pollution_to_pollution_no_global(feature_elem)])
                                             if np.isnan(feature) or feature < 0:
-                                                feature_tensor[map_index[0], map_index[1], (5+feature_index)] = 'NaN'
-                                                feature_tensor[map_index[0], map_index[1], (5+feature_index+1)] = 'NaN'
+                                                feature_tensor[map_index[0], map_index[1], (5+feature_index)] = nan_signal
+                                                feature_tensor[map_index[0], map_index[1], (5+feature_index+1)] = nan_signal
                                                 num_of_missing += 1
                                                 total_number += 1
                                             else:
@@ -259,8 +270,8 @@ def read_global_data_map(path, site, feature_selection, date_range=[2014, 2015],
                                                 feature_tensor[map_index[0], map_index[1], (5+feature_index+1)] = xy_coord[1]
                                                 total_number += 1
                                         except:
-                                            feature_tensor[map_index[0], map_index[1], (5+feature_index)] = 'NaN'
-                                            feature_tensor[map_index[0], map_index[1], (5+feature_index+1)] = 'NaN'
+                                            feature_tensor[map_index[0], map_index[1], (5+feature_index)] = nan_signal
+                                            feature_tensor[map_index[0], map_index[1], (5+feature_index+1)] = nan_signal
                                             num_of_missing += 1
                                             total_number += 1
                                     elif feature_elem.find('_x_') > 0:
@@ -274,14 +285,14 @@ def read_global_data_map(path, site, feature_selection, date_range=[2014, 2015],
                                                     [pollution_to_pollution_no_global(feature_elems[i_elem])])
                                                 mul_feature *= features[i_elem]
                                             if [i for i in features if np.isnan(i)] or [i for i in features if i < 0]:
-                                                feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = 'NaN'
+                                                feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
                                                 num_of_missing += 1
                                                 total_number += 1
                                             else:
                                                 feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = mul_feature
                                                 total_number += 1
                                         except:
-                                            feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = 'NaN'
+                                            feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
                                             num_of_missing += 1
                                             total_number += 1
 
@@ -290,14 +301,220 @@ def read_global_data_map(path, site, feature_selection, date_range=[2014, 2015],
                                             feature = float(y_d_h_data[str(year)][each_date]['pollution'][site_name][each_hour]
                                                             [pollution_to_pollution_no_global(feature_elem)])
                                             if np.isnan(feature) or feature < 0:
-                                                feature_tensor[map_index[0], map_index[1], (5+feature_index)] = 'NaN'
+                                                feature_tensor[map_index[0], map_index[1], (5+feature_index)] = nan_signal
                                                 num_of_missing += 1
                                                 total_number += 1
                                             else:
                                                 feature_tensor[map_index[0], map_index[1], (5+feature_index)] = feature
                                                 total_number += 1
                                         except:
-                                            feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = 'NaN'
+                                            feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+                                            num_of_missing += 1
+                                            total_number += 1
+
+                        feature_tensor_list.append(feature_tensor)
+
+    print('Missing rate: %.5f' % (num_of_missing/total_number))
+    return np.array(feature_tensor_list)
+"""
+
+
+def label_exist_check(feature_selection, table_label):
+    for idx, each in enumerate(feature_selection):
+        if each not in table_label:
+            print("%s isn't record in db" % each)
+            feature_selection.pop(idx)
+    print("# ----------------------------------------------------------------")
+    print("#")
+    print("# feature_selection: ", feature_selection)
+    print("#")
+    print("# ----------------------------------------------------------------")
+    if not len(feature_selection):
+        print("couldn't get any feature")
+        exit()
+    return feature_selection
+
+
+# new version (y_d_h_data: site-year-month-day-hour-minute<list of second>)
+def read_hybrid_data_map(site, feature_selection, date_range=[2014, 2015],
+                         beginning='1/1', finish='12/31', table_name="ncsist_data", path='None'):
+    # path: 'db' or filepath
+    # load data from files
+    # -------------------
+    if os.path.exists(path):
+        print("load files ..")
+        pickle_dir = os.path.join(os.path.curdir, "..", "..", "dataset", "AirQuality_EPA", "pickle")
+
+        pickle_exist_flag = 1
+        for each_site in list(site.adj_map.keys()):
+            if not os.path.exists(os.path.join(pickle_dir, '%s_db' % each_site)):
+                pickle_exist_flag = 0
+        if pickle_exist_flag:
+            y_d_h_data = dict()
+            for site_name in list(site.adj_map.keys()):
+                y_d_h_data[site_name] = pickle.load(open(os.path.join(pickle_dir, '%s_db' % site_name), 'rb'))
+            print()
+        else:
+            db_data = global_data_reader(path)
+            y_d_h_data = db_to_dict(db_data)
+            for site_name in y_d_h_data:
+                pickle.dump(y_d_h_data[site_name], open(os.path.join(pickle_dir, '%s_db' % site_name), 'wb'))
+            # exit()  # only for create pickle file of temp_db
+    # -------------------
+
+    # load data from db
+    # -------------------
+    # connect MySQL
+    else:
+        time_range = ["%d-%s-%s" % (date_range[0], beginning.split('/')[0], beginning.split('/')[1]),
+                      "%d-%s-%s" % (date_range[-1], finish.split('/')[0], finish.split('/')[1])]
+        time_range = [str(datetime.datetime.strptime(time_point, "%Y-%m-%d").date()) for time_point in time_range]
+        print("connect db .. ")
+        db = MySQLdb.connect(host=db_config["host"],
+                             user=db_config["user"], passwd=db_config["passwd"], db=db_config["db"])
+
+        polution_db = load_db(db, table_name=table_name, time_range=time_range)
+
+        y_d_h_data = db_to_dict(polution_db)
+    # -------------------
+    feature_selection = label_exist_check(feature_selection, list(polution_db[0].keys()))
+
+    num_of_missing = 0.
+    total_number = 0.
+    feature_tensor_list = []
+
+    for year in date_range:
+        print('%s .. ' % year)
+        days = 0
+
+        for month in range(1, 13):
+
+            # Check the exceeding of the duration
+            if year == int(date_range[0]) and month < int(beginning[:beginning.index('/')]):  # start
+                continue
+            elif year == int(date_range[-1]) and month > int(finish[:finish.index('/')]):  # dead line
+                continue
+
+            # Set the number of days in a month
+            if (month == 4) or (month == 6) or (month == 9) or (month == 11):
+                days = 30
+            elif month == 2:
+                # random choose two data to check whether 2/29 exist in this year
+                if '2/29' in y_d_h_data[site.site_name][str(year)]:
+                    days = 29
+                else:
+                    days = 28
+            else:
+                days = 31
+
+            for day in range(days):
+                each_date = str(month) + '/' + str(day + 1)
+
+                # Check the exceeding of the duration
+                if (year == int(date_range[0])) and (month == int(beginning[:beginning.index('/')])) and (
+                            (day+1) < int(beginning[(beginning.index('/')+1):])):  # start
+                    continue
+                elif (year == int(date_range[-1])) and month == int(finish[:finish.index('/')]) and (
+                            (day+1) > int(finish[(finish.index('/')+1):])):  # dead line
+                    continue
+
+                for each_hour in range(24):
+                    for each_minute in range(60):
+                        if each_date not in y_d_h_data[site.site_name][str(year)]:
+                            num_of_missing += 24
+                            total_number += 24
+                            continue
+
+                        if str(each_hour) not in y_d_h_data[site.site_name][str(year)][each_date]:
+                            num_of_missing += 1
+                            total_number += 1
+                            continue
+
+                        if str(each_minute) not in y_d_h_data[site.site_name][str(year)][each_date][str(each_hour)]:
+                            continue
+
+                        # Construct feature vector
+                        time_feature = list()
+                        time_feature += convert_polar_to_cartesian(
+                            time_to_angle('%s/%s' % (year, each_date))[-1])  # day of year
+                        time_feature += convert_polar_to_cartesian(
+                            return_weekday(int(year), month, int(day+1)))  # day of week
+                        time_feature += convert_polar_to_cartesian(
+                            float(each_hour)/24*360)  # time of day
+
+                        feature_tensor = np.zeros(shape=(site.shape + ((6 + len(feature_selection) + 1),)), dtype=float)
+
+                        site_names = list(site.adj_map.keys())
+                        for site_name in site_names:
+                            map_index = site.adj_map[site_name]
+
+                            # Set time feature
+                            feature_tensor[map_index[0], map_index[1], 0:6] = np.array(time_feature)
+
+                            # Set feature vector
+                            if not (site_name in y_d_h_data):
+                                # All features should be set to nan_signal
+                                feature_tensor[map_index[0], map_index[1], 6:-1] = nan_signal
+                                num_of_missing += len(feature_selection)
+                                total_number += len(feature_selection)
+                            else:
+                                feature_index = 0
+                                for feature_elem in feature_selection:
+                                    feature_index += 1
+                                    if feature_elem == 'WIND_DIREC':
+                                        try:
+                                            feature = float(y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
+                                                            [feature_elem])
+                                            if np.isnan(feature) or feature < 0:
+                                                feature_tensor[map_index[0], map_index[1], (5+feature_index)] = nan_signal
+                                                feature_tensor[map_index[0], map_index[1], (5+feature_index+1)] = nan_signal
+                                                num_of_missing += 1
+                                                total_number += 1
+                                            else:
+                                                xy_coord = convert_polar_to_cartesian(feature)
+                                                feature_tensor[map_index[0], map_index[1], (5+feature_index)] = xy_coord[0]
+                                                feature_tensor[map_index[0], map_index[1], (5+feature_index+1)] = xy_coord[1]
+                                                total_number += 1
+                                        except:
+                                            feature_tensor[map_index[0], map_index[1], (5+feature_index)] = nan_signal
+                                            feature_tensor[map_index[0], map_index[1], (5+feature_index+1)] = nan_signal
+                                            num_of_missing += 1
+                                            total_number += 1
+                                    elif feature_elem.find('_x_') > 0:
+                                        feature_elems = feature_elem.split('_x_')
+                                        try:
+                                            mul_feature = 1
+                                            features = np.zeros(shape=(len(feature_elems)))
+                                            for i_elem in range(len(feature_elems)):
+                                                features[i_elem] = float(
+                                                    y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
+                                                    [feature_elems[i_elem]])
+                                                mul_feature *= features[i_elem]
+                                            if [i for i in features if np.isnan(i)] or [i for i in features if i < 0]:
+                                                feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+                                                num_of_missing += 1
+                                                total_number += 1
+                                            else:
+                                                feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = mul_feature
+                                                total_number += 1
+                                        except:
+                                            feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+                                            num_of_missing += 1
+                                            total_number += 1
+
+                                    else:
+                                        try:
+                                            feature = float(y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
+                                                            [feature_elem])
+                                            if np.isnan(feature) or feature < 0:
+                                                feature_tensor[map_index[0], map_index[1], (5+feature_index)] = nan_signal
+                                                num_of_missing += 1
+                                                total_number += 1
+                                            else:
+                                                feature_tensor[map_index[0], map_index[1], (5+feature_index)] = feature
+                                                total_number += 1
+                                        except:
+                                            feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
                                             num_of_missing += 1
                                             total_number += 1
 
@@ -307,6 +524,13 @@ def read_global_data_map(path, site, feature_selection, date_range=[2014, 2015],
     return np.array(feature_tensor_list)
 
 
+# def read_local_data_map(path, site, feature_selection, date_range=["2014-1-1-00:00:00", "2015-12-31-23:59:59"], update=False):
+#     all_data_list = local_data_reader(path, date_range)
+#
+#
+#     return 0
+
+"""
 def read_data_sets(sites=['中山', '古亭', '士林', '松山', '萬華'], date_range=['2014', '2015'],
                    feature_selection=['PM2.5'], beginning='1/1', finish='12/31',
                    path=root_path+'dataset/', update=False):
@@ -369,7 +593,7 @@ def read_data_sets(sites=['中山', '古亭', '士林', '松山', '萬華'], dat
                             if not (site in y_d_h_data[each_year][each_date]['pollution']):
                                 # print('Data of site(%s) missing: %s/%s %d:00' % (site, each_year, each_date, each_hour))
                                 for feature_elem in feature_selection:
-                                    feature_vector.append('NaN')
+                                    feature_vector.append(nan_signal)
                                     num_of_missing += 1
                                     total_number += 1
                             else:
@@ -377,7 +601,7 @@ def read_data_sets(sites=['中山', '古亭', '士林', '松山', '萬華'], dat
                                     try:
                                         feature = float(y_d_h_data[each_year][each_date]['pollution'][site][each_hour][pollution_to_pollution_no_global(feature_elem)])
                                         if feature < 0:
-                                            feature_vector.append('NaN')
+                                            feature_vector.append(nan_signal)
                                             num_of_missing += 1
                                             total_number += 1
                                         else:
@@ -386,7 +610,7 @@ def read_data_sets(sites=['中山', '古亭', '士林', '松山', '萬華'], dat
                                     except:
                                         # print('Data of feature(%s) of site(%s) missing: %s/%s %d:00' % (
                                         #     feature_elem, site, each_year, each_date, each_hour))
-                                        feature_vector.append('NaN')
+                                        feature_vector.append(nan_signal)
                                         num_of_missing += 1
                                         total_number += 1
                         feature_vector_set.append(feature_vector)
@@ -394,6 +618,7 @@ def read_data_sets(sites=['中山', '古亭', '士林', '松山', '萬華'], dat
     # print('data_frame .. ok')
     print('Missing rate: %.5f' % (num_of_missing/total_number))
     return feature_vector_set
+"""
 
 
 def concatenate_time_steps(X, n_steps):
@@ -479,3 +704,48 @@ def construct_second_time_steps(X, n_steps_layer1, n_steps_layer2):
                 y.append(X[i + j*n_steps_layer1])
             Y.append(y)
     return Y
+
+
+if __name__ == "__main__":
+    from utility.reader import read_hybrid_data_map
+
+    # --------- EPA testing
+    # EPA_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a88870/AirQuality/dataset/AirQuality_EPA/Data_of_Air_Pollution"
+    #
+    # training_year = [2014, 2015]  # change format from   2014-2015   to   ['2014', '2015']
+    # training_duration = ['1/1', '12/31']
+    #
+    # ------------------------------------------------------------------------------------------------------------------
+    # kinds of pollution in AirQuality EPA DB:
+    #  'PSI', 'MajorPollutant', 'So2', 'CO', 'O3', 'PM10', 'PM2_5', 'NO2', 'WindSpeed', 'WindDirec', 'FPMI', 'NOx', 'NO'
+    # ------------------------------------------------------------------------------------------------------------------
+    # pollution_kind = ['PM2.5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
+    #                   'PM2.5_x_O3', 'PM2.5_x_CO', 'PM2.5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP', 'CO_x_NOx',
+    #                   'WIND_SPEED', 'WIND_DIREC']
+    #
+    # target_site = pollution_site_map2["古亭"]
+    #
+    # read_hybrid_data_map(site=target_site, feature_selection=pollution_kind,
+    #                      date_range=np.atleast_1d(training_year), beginning=training_duration[0],
+    #                      finish=training_duration[-1], table_name="AirDataTable")
+
+    # --------- ncsist testing
+    ncsist_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a88870/AirQuality/dataset/PM25Data_forAI_0903-0930"
+    training_year = [2018, 2018]  # change format from   2014-2015   to   ['2014', '2015']
+    training_duration = ['9/1', '9/30']
+
+    if training_year[0] == training_year[-1]:
+        training_year.pop(0)
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # kinds of pollution in AirQuality ncsist DB:
+    #  'AMB_TEMP', 'PM2.5', 'RH', 'WIND_SPEED', 'WIND_DIREC'
+    # ------------------------------------------------------------------------------------------------------------------
+    pollution_kind = ['AMB_TEMP', 'PM2_5', 'RH', 'WIND_SPEED', 'WIND_DIREC']
+
+    target_site = pollution_site_local_map["Node_09"]
+
+    read_hybrid_data_map(site=target_site, feature_selection=pollution_kind,
+                         date_range=np.atleast_1d(training_year), beginning=training_duration[0],
+                         finish=training_duration[-1], table_name="ncsist_data")
+    exit()

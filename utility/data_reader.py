@@ -1,15 +1,17 @@
 # _*_ coding: utf-8 _*_
+import numpy as np
+import pickle
+import os
+import datetime
 
 from ConvLSTM.file_reader import load_all
 from operator import itemgetter
 from utility.feature_processor import time_to_angle, data_coordinate_angle
-from ConvLSTM.config import root
-import numpy as np
-import pickle
-import os
+from ConvLSTM.config import root, def_nan_signal
 
 
 root_path = root()
+nan_signal = def_nan_signal()  # 'NaN' or np.nan
 
 
 # def site_to_site_no(site_pient):
@@ -55,6 +57,9 @@ def param_code_to_param_code_no(param_code):
     else:
         print("This param_code doesn't exist.")
 
+EPA_feature_labels = ['SO2', 'CO', 'O3', 'PM10', 'PM2.5', 'NOx', 'NO', 'NO2', 'THC', 'NMHC', 'CH4', 'UVB', 'AMB_TEMP', 'RAINFALL', 'RH', 'WIND_SPEED', 'WIND_DIREC', 'WS_HR', 'WD_HR', 'PH_RAIN', 'RAIN_COND']
+ncsist_feature_labels = ['AMB_TEMP', 'RH', 'PM2.5', 'WIND_DIREC', 'WIND_SPEED']
+
 
 def pollution_to_pollution_no(pollution):
     if pollution == 'SO2':return 0
@@ -82,6 +87,8 @@ def pollution_to_pollution_no(pollution):
         # print("THis pollution(%s) hasn't been recorded." % pollution)
         None
 
+
+"""
 weather_site_name2no = {
     '台中': 20, '梧棲': 30, '大坑': 158, '梨山': 170, '思源': 173, '雙崎': 172, '馬都安': 177,
     '日月潭': 28, '合歡山莊': 39, '神木村': 143, '鳳凰': 152, '竹山': 154, '廬山': 163, '昆陽': 165, '合歡山': 241, '中興新村': 242,
@@ -122,17 +129,19 @@ weather_site_name2no = {
 }
 
 weather_site_no2name = {y: x for x, y in weather_site_name2no.items()}
+"""
 
 
 # ----------  WORK START  ----------
 def data_reader(path, start_year, last_year, update=False):
+    # read data from EPA files
     y_d_h_data = dict()
     not_exit_flag = 0
     while (start_year != last_year+1) and (not update):
-        if os.path.exists(path + 'cPickle/pollution_and_weather_data_' + str(start_year)):
+        if os.path.exists(os.path.join(path, 'cPickle', 'pollution_and_weather_data_%s' % (str(start_year)))):
             not_exit_flag += 1
             print('Reading %d data by cPickle .. ' % start_year)
-            fr = open(path+'cPickle/pollution_and_weather_data_'+str(start_year), 'rb')
+            fr = open(os.path.join(path, 'cPickle', 'pollution_and_weather_data_%s' % str(start_year)), 'rb')
             y_d_h_data[str(start_year)] = pickle.load(fr, encoding='utf-8')
             fr.close()
             start_year += 1
@@ -153,7 +162,7 @@ def data_reader(path, start_year, last_year, update=False):
 
         # --- csv ---
         # csv_pollution_data = []
-        load_all(pollution_data_files, path+'Data_of_Air_Pollution/')
+        load_all(pollution_data_files, os.path.join(path, 'Data_of_Air_Pollution'))
 
         # data pre-processing : format
         keep_date = ''
@@ -178,7 +187,7 @@ def data_reader(path, start_year, last_year, update=False):
                     # check/create year dict., ex: 2016, 2015
                     if not(year in y_d_h_data):
                         y_d_h_data[year] = dict()
-                    # check/create date dict., ex: 01/01, 10/31
+                    # check/create date dict., ex: 1/1, 10/31
                     if not(date in y_d_h_data[year]):
                         y_d_h_data[year][date] = dict()
                     # pollution sites dict.
@@ -197,10 +206,10 @@ def data_reader(path, start_year, last_year, update=False):
                         keep_date = line[0]
 
                         # Reserve 'num_pollution_property' entries for data, and take '-' to mean missing value
-                        for each_hour in np.arange(24):
-                            pollution_vector_one_day.append(['-' for i in np.arange(num_pollution_property)])
+                        for each_hour in range(24):
+                            pollution_vector_one_day.append(['-' for i in range(num_pollution_property)])
 
-                    for each_hour in np.arange(24):
+                    for each_hour in range(24):
                         # The first three elements are date, sites and kind of pollution
                         try:
                             pollution_vector_one_day[each_hour][pollution_to_pollution_no(line[2].replace(' ', ''))] = line[3+each_hour]
@@ -219,10 +228,10 @@ def data_reader(path, start_year, last_year, update=False):
         weather_data = []
         load_all(weather_data, path+'Data_of_Weather/')
 
-        for file_i in np.arange(len(weather_data)):
+        for file_i in range(len(weather_data)):
             del(weather_data[file_i][0])
             # sorting by date -> site -> param_code
-            for line_j in np.arange(len(weather_data[file_i])):
+            for line_j in range(len(weather_data[file_i])):
                 [year, _, date, angle] = time_to_angle(weather_data[file_i][line_j][2].replace(' 00:00:00', ''))
 
                 format_day_order = angle/360.
@@ -235,7 +244,7 @@ def data_reader(path, start_year, last_year, update=False):
 
             keep_date = ''
             keep_site = ''
-            for line_j in np.arange(len(weather_data[file_i])):
+            for line_j in range(len(weather_data[file_i])):
                 # a new site
                 if weather_data[file_i][line_j][0] != keep_site:
                     if keep_site != '':
@@ -275,11 +284,11 @@ def data_reader(path, start_year, last_year, update=False):
 
                 # Initiate weather_vector, when 'a new day' or 'a new site'.
                 if len(weather_vector) == 0:
-                    for each_hour in np.arange(24):
-                        weather_vector.append(['-' for i in np.arange(num_weather_property)])
+                    for each_hour in range(24):
+                        weather_vector.append(['-' for i in range(num_weather_property)])
 
                 # collecting data
-                for each_hour in np.arange(24):
+                for each_hour in range(24):
                     weather_vector[each_hour][param_code_to_param_code_no(weather_data[file_i][line_j][1])] \
                         = weather_data[file_i][line_j][3+each_hour]  # the first three element mean site, param_code and date
 
@@ -290,10 +299,165 @@ def data_reader(path, start_year, last_year, update=False):
 
         print('Saving .. ')
         for years in y_d_h_data.keys():
-            fw1 = open(path+'cPickle/pollution_and_weather_data_'+years, 'wb')
+            fw1 = open(os.path.join(path, 'cPickle', 'pollution_and_weather_data_%s' % years), 'wb')
             pickle.dump(y_d_h_data[years], fw1)
             fw1.close()
 
         print('Saved.')
 
         return y_d_h_data
+
+
+def polution_data_init(table_labels):
+    polution_data = dict()
+    for label in table_labels:
+        polution_data[label] = nan_signal
+    return polution_data
+
+
+def global_data_reader(dirpath, date_range=None, table_label=EPA_feature_labels):
+    # read data from EPA files
+    # data in each file must be sorted by date
+    raw_data = list()
+    load_all(raw_data, dirpath)
+
+    polution_data_list = list()
+    polution_data_index = 0
+
+    for data_idx, data in enumerate(raw_data):
+        for line_idx, line_list in enumerate(data):
+
+            line_list[0] = line_list[0].replace('/', '-')  # year/month/day -> year-month-day
+            site_name = line_list[1]
+            feature = line_list[2]
+
+            if not polution_data_index:
+                print("%s  %s" % (line_list[0], site_name))
+                for i in range(24):  # 24 hours in one day
+                    polution_data_list.append(polution_data_init(table_label))
+                polution_data_index += 1
+            elif polution_data_list[-1]['time'].date() != datetime.datetime.strptime(line_list[0], "%Y-%m-%d").date():
+                print("%s  %s" % (line_list[0], site_name))
+                for i in range(24):  # 24 hours in one day
+                    polution_data_list.append(polution_data_init(table_label))
+                polution_data_index += 1
+
+            for hour in range(24):  # 24 hours in one day
+                try:
+                    elem = line_list[3+hour]
+                except:
+                    elem = nan_signal
+                insert_index = (polution_data_index-1) * 24 + hour
+
+                polution_data_list[insert_index]['time'] = datetime.datetime.strptime(line_list[0] + "-%d" % hour, "%Y-%m-%d-%H")  # year/month/day -> year-month-day-hour
+                polution_data_list[insert_index]['site'] = site_name
+                try:
+                    polution_data_list[insert_index][feature] = float(elem)
+                except:
+                    polution_data_list[insert_index][feature] = nan_signal
+    return polution_data_list
+
+
+def local_data_reader(dirpath, date_range=None):
+    # read data from ncsist files
+    filepath_list = os.listdir(dirpath)
+    polution_data_list = list()
+
+    for filename in filepath_list:
+
+        site_name = filename.split('-')[0]
+
+        filepath = os.path.join(dirpath, filename)
+        print(filename)
+        with open(filepath, 'r') as fr:
+            data = fr.readlines()
+
+        for line in data:
+            try:
+                # print(line)
+                line_list = line.split(',')
+                time_data = datetime.datetime.strptime(line_list[1], "%Y-%m-%d-%H:%M:%S")
+                AMB_TEMP = float(line_list[-5])
+                RH = float(line_list[-4])
+                PM2_5 = float(line_list[-3])
+                WIND_DIREC = float(line_list[-2])
+                WIND_SPEED = float(line_list[-1])
+            except:
+                continue
+
+            if not date_range:
+                polution_data = dict()
+                polution_data['site'] = site_name
+                polution_data['time'] = time_data
+                polution_data['AMB_TEMP'] = AMB_TEMP
+                polution_data['RH'] = RH
+                polution_data['PM2.5'] = PM2_5
+                polution_data['WIND_DIREC'] = WIND_DIREC
+                polution_data['WIND_SPEED'] = WIND_SPEED
+
+                polution_data_list.append(polution_data)
+            elif datetime.datetime.strptime(date_range[0], "%Y-%m-%d-%H:%M:%S") <= time_data \
+                    <= datetime.datetime.strptime(date_range[1], "%Y-%m-%d-%H:%M:%S"):
+                polution_data = dict()
+                polution_data['site'] = site_name
+                polution_data['time'] = time_data
+                polution_data['AMB_TEMP'] = AMB_TEMP
+                polution_data['RH'] = RH
+                polution_data['PM2.5'] = PM2_5
+                polution_data['WIND_DIREC'] = WIND_DIREC
+                polution_data['WIND_SPEED'] = WIND_SPEED
+
+                polution_data_list.append(polution_data)
+
+    return polution_data_list
+
+
+def db_to_dict(table):
+    print("change form from db to dict ..")
+    # change form of db to data form for data pre-processing(ex. y_d_h_data)
+    data_dict = dict()
+
+    # sort by time
+    # sorted(table, key=lambda x: x["time"])
+
+    for each_data in table:
+        site = each_data['site']
+        year = each_data['time'].year
+        month = each_data['time'].month
+        day = each_data['time'].day
+        date = "%s/%s" % (month, day)
+        hour = each_data['time'].hour
+        minute = each_data['time'].minute
+
+        if site not in data_dict:
+            data_dict[site] = dict()
+        if str(year) not in data_dict[site]:
+            data_dict[site][str(year)] = dict()
+        if date not in data_dict[site][str(year)]:
+            data_dict[site][str(year)][date] = dict()
+        if str(hour) not in data_dict[site][str(year)][date]:
+            data_dict[site][str(year)][date][str(hour)] = dict()
+        if str(minute) not in data_dict[site][str(year)][date][str(hour)]:
+            data_dict[site][str(year)][date][str(hour)][str(minute)] = list()
+
+        data_dict[site][str(year)][date][str(hour)][str(minute)].append(polution_data_init(each_data.keys()))
+
+        for each_elem in each_data.keys():
+            if each_elem in data_dict[site][str(year)][date][str(hour)][str(minute)][-1]:
+                data_dict[site][str(year)][date][str(hour)][str(minute)][-1][each_elem] = each_data[each_elem]
+
+    return data_dict
+
+
+# ncsist_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a88870/AirQuality/dataset/PM25Data_forAI_0903-0930"
+# EPA_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a88870/AirQuality/dataset/AirQuality_EPA/Data_of_Air_Pollution_for_testing"
+
+
+# ncsist_polution_db = local_data_reader(ncsist_data_dir)
+# EPA_polution_db = global_data_reader(EPA_data_dir)
+
+# ncsist_polution_data = db_to_dict(ncsist_polution_db)
+# EPA_polution_data = db_to_dict(EPA_polution_db)
+
+
+# exit()

@@ -1,7 +1,8 @@
 import numpy as np
 import sys
-from sklearn.preprocessing import Imputer
-from ConvLSTM.config import root
+# from sklearn.preprocessing import Imputer
+from sklearn.impute import SimpleImputer
+from PM25Forecast.ConvLSTM.config import root
 
 
 root_path = root()
@@ -32,7 +33,8 @@ def missing_recover(X, index, k=3):
 
     # sklearn
     # index is the minimal row no. which has missing value in X.
-    imp = Imputer(missing_values='NaN', strategy='mean', axis=0)
+    # imp = Imputer(missing_values='NaN', strategy='mean', axis=0)
+    imp = SimpleImputer(strategy='mean')
     forward = index - k if ((index - k) >= 0) else 0
     backward = index + k + 1 if ((index + k + 1) <= len(X)) else len(X)
 
@@ -68,6 +70,6 @@ def missing_recover(X, index, k=3):
         except:
             print('Error: imputation, ', sys.exc_info()[0])
 
-    tt = X[index, nan_index[0], nan_index[1]]
+    # tt = X[index, nan_index[0], nan_index[1]]
 
     return X

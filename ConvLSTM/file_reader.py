@@ -24,12 +24,15 @@ def load(file_name, path):
         source = path
 
     if os.path.exists(source):
-        f = open(source, 'r')
+        try:
+            f = open(source, 'r')
+            f.readline()
+        except:
+            f = open(source, 'r', encoding='big5')
+            f.readline()
         data = []
-        for i in f:
-            elem = i
-            if len(elem) > 0:
-                data.append(elem.replace('"', '').replace('\r\n', '').split(','))
+        for elem in f:
+            data.append(elem.replace('"', '').replace('\r\n', '').split(','))
 
         f.close()
         return data
@@ -48,7 +51,7 @@ def load_xls(file_name, SheetName, path):
         workbook = xlrd.open_workbook(source)
         worksheet = workbook.sheet_by_name(SheetName)
 
-        for rownum in range(worksheet.nrows):
+        for rownum in range(1, worksheet.nrows):
             data.append(list(x for x in worksheet.row_values(rownum)))
 
         return data
