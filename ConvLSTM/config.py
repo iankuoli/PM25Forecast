@@ -7,6 +7,8 @@ root_path = os.path.abspath(os.path.join(os.getcwd(), 'PM25Forecast', 'ConvLSTM'
 data_path = os.path.abspath(os.path.join('..', 'dataset', 'AirQuality_EPA'))
 nan_signal = 'NaN'  # 'NaN' or np.nan
 
+global_site_lock = "龍潭"
+
 db_config = dict()
 db_config['host'] = "localhost"
 db_config['user'] = "root"
@@ -16,6 +18,44 @@ db_config['db'] = "AirQuality"
 
 def def_nan_signal():
     return nan_signal
+
+
+def def_nan_dict_global():
+    """
+    loss:  'Status': '普通', 'site': '新竹', 'idAirDataTable': 822004, 'County': '新竹市',
+           'MajorPollutant': '細懸浮微粒', 'time': datetime.datetime(2018, 9, 1, 1, 0)
+    :return: a fake dict fill with nan_signal data for EPA
+    """
+    return {'NO': nan_signal, 'NOx': nan_signal, 'O3': nan_signal, 'NO2': nan_signal,
+            'PSI': nan_signal, 'WIND_SPEED': nan_signal, 'WIND_DIREC': nan_signal, 'SO2': nan_signal,
+            'PM10': nan_signal, 'PM2_5': nan_signal, 'CO': nan_signal, 'FPMI': nan_signal}
+
+
+def def_nan_date_global():
+    fake_dict_global = def_nan_dict_global()
+    all_day_nan = dict()
+    for h in range(24):
+        all_day_nan[h] = {'0': [fake_dict_global]}
+    return all_day_nan
+
+
+def def_nan_dict_local():
+    """
+    loss: 'time': datetime.datetime(2018, 9, 3, 11, 11, 2), 'site': 'Node_10'
+    :return: a fake dict fill with nan_signal data for NCSIST
+    """
+    return {'AMB_TEMP': nan_signal, 'RH': nan_signal, 'WIND_SPEED': nan_signal,
+            'WIND_DIREC': nan_signal, 'PM2_5': nan_signal}
+
+
+def def_nan_date_local():
+    fake_dict_local = def_nan_dict_local()
+    all_day_nan = dict()
+    for h in range(24):
+        all_day_nan[h] = {}
+        for m in range(60):
+            all_day_nan[h][m] = [fake_dict_local]
+    return all_day_nan
 
 
 def root():
@@ -30,6 +70,12 @@ def check_folder(file_path):
     # check folder
     if not os.path.isdir(os.path.join(data_path, 'cPickle')):
         os.makedirs(os.path.join(data_path, 'cPickle'))
+
+
+def check_folder2(file_path):
+    # check folder
+    if not os.path.isdir(file_path):
+        os.makedirs(file_path)
 
 
 class Cite:
@@ -312,11 +358,11 @@ pollution_site_map2 = {
     # ------------------------------------------
     # |       |       |       |       |       |
     # ------------------------------------------
-    '龍潭': Cite( '北部', '桃園', '龍潭', (5, 5),
+    '龍潭': Cite('北部', '桃園', '龍潭', (5, 5),
                 {'桃園': (0, 3),
                  '湖口': (1, 1), '平鎮': (1, 2), '土城': (1, 4),
                  '新竹': (2, 0), '龍潭': (2, 2),
-                 '竹東': (3, 1)} ),
+                 '竹東': (3, 1)}),
 
     # ------------------------------------------
     # |       |       |       |  大園  |       |
@@ -974,6 +1020,7 @@ pollution_site_map = {
 
 
 pollution_site_local_map = {
+    # map
     # -------------------------------------------------------------------------------------------------
     # |       |       |       |       |       |       |       |       |Node_02|       |       |       |
     # -------------------------------------------------------------------------------------------------
@@ -999,13 +1046,41 @@ pollution_site_local_map = {
     # -------------------------------------------------------------------------------------------------
     # |       |       |       |       |       |       |       |       |Node_05|       |       |       |
     # -------------------------------------------------------------------------------------------------
-    'Node_09': Cite('桃園', '中科院', 'Node_09', (12, 12),
-                {'Node_01': (1, 3), 'Node_02': (0, 8),
-                 'Node_03': (1, 9), 'Node_04': (11, 8),  # 'Node_05': (2, 3),
-                 'Node_06': (10, 8), 'Node_07': (9, 9),
-                 'Node_08': (7, 9), 'Node_09': (7, 11),
-                 'Node_10': (10, 10)
-                 })
+
+    ####################################################################################################################
+    #
+    # Note: target site must be placed in the center of map
+    #
+    ####################################################################################################################
+    # -----------------------------------------------------------------------------------------
+    # |       |       |       |Node_03|       |       |       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    # |       |       |       |       |       |       |       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    # |       |       |       |       |       |       |       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    # |       |       |       |       |       |       |       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    # |       |       |       |       |       |       |       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    # |       |       |       |Node_08|       |Node_09|       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    # |       |       |       |       |       |       |       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    # |       |       |       |Node_07|       |       |       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    # |       |       |Node_06|       |Node_10|       |       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    # |       |       |Node_05|       |       |       |       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    # |       |       |       |       |       |       |       |       |       |       |       |
+    # -----------------------------------------------------------------------------------------
+    'Node_09': Cite('桃園', '中科院', 'Node_09', (11, 11),
+                    {'Node_03': (0, 3),
+                     'Node_06': (8, 2), 'Node_07': (7, 3),
+                     'Node_08': (5, 3), 'Node_09': (5, 5),
+                     'Node_10': (8, 4)
+                     })
 }
 
 
