@@ -17,7 +17,7 @@ def missing_check(x_incomplete):
     length = len(x_incomplete)
 
     for elem in range(length):
-        if np.isnan(sum(sum(sum(x_incomplete[elem])))):
+        if np.isnan(np.sum(x_incomplete[elem])):
             x_incomplete = missing_recover(x_incomplete, elem)
     return np.array(x_incomplete, dtype=np.float)
 
@@ -41,6 +41,11 @@ def missing_recover(X, index, k=3):
     nan_indices = np.argwhere(np.isnan(X[index]))
 
     if X.ndim == 4:
+        # filter fake nan feature except day of month , day of week , time of day ####################################### not great
+        len_features = X[index].shape[-1] - 6
+        # if len(nan_indices) >= len_features:
+        if len(np.argwhere(np.isnan(X[forward:backward]))) >= len_features * (backward - forward) * 4:
+            return X
         for nan_index in nan_indices:
 
             # Learn the relationship by using fit()
@@ -55,7 +60,8 @@ def missing_recover(X, index, k=3):
                 X[index, nan_index[0], nan_index[1]] = \
                     imp.transform(X[index, nan_index[0], nan_index[1]].reshape(1, -1))
             except:
-                print('Error: imputation, ', sys.exc_info()[0])
+                # print('Error: imputation, ', sys.exc_info()[0])
+                pass
     else:
 
         # Learn the relationship by using fit()

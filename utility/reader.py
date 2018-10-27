@@ -3,17 +3,25 @@ import datetime
 import os
 import pickle
 import numpy as np
-import MySQLdb
+# import MySQLdb
+import pymysql as MySQLdb
 
 from utility.data_reader import data_reader, local_data_reader, global_data_reader, db_to_dict
 from utility.feature_processor import time_to_angle, return_weekday, data_coordinate_angle, convert_polar_to_cartesian
-from ConvLSTM.config import root, def_nan_signal, pollution_site_map2, db_config, pollution_site_local_map
+from ConvLSTM.config import root, site_map2, def_nan_signal, pollution_site_map2, db_config, pollution_site_local_map
+from ConvLSTM.config import def_nan_dict_global, def_nan_dict_local, def_nan_date_global, def_nan_date_local
 from MySQL.connMySQL import load_db
-
+from utility.missing_value_processer import missing_check
+from utility.Utilities import topK_next_interval
 
 root_path = root()
 
 nan_signal = def_nan_signal()  # 'NaN' or np.nan
+
+fake_dict_global = def_nan_dict_global()
+fake_dict_date_global = def_nan_date_global()
+fake_dict_local = def_nan_dict_local()
+fake_dict_date_local = def_nan_date_local()
 
 """
 num_of_pollution_data = 21
@@ -126,7 +134,7 @@ def pollution_to_pollution_no_global(pollution):
     elif pollution == 'CO':return 1
     elif pollution == 'O3':return 2
     elif pollution == 'PM10':return 3
-    elif pollution == 'PM2.5':return 4
+    elif pollution == 'PM2_5':return 4
     elif pollution == 'NOx':return 5
     elif pollution == 'NO':return 6
     elif pollution == 'NO2':return 7
@@ -153,7 +161,7 @@ def pollution_to_pollution_no_local(pollution):
     elif pollution == 'CO':return 1
     elif pollution == 'O3':return 2
     elif pollution == 'PM10':return 3
-    elif pollution == 'PM2.5':return 4
+    elif pollution == 'PM2_5':return 4
     elif pollution == 'NOx':return 5
     elif pollution == 'NO':return 6
     elif pollution == 'NO2':return 7
@@ -320,10 +328,22 @@ def read_global_data_map(path, site, feature_selection, date_range=[2014, 2015],
 
 
 def label_exist_check(feature_selection, table_label):
+    pop_list = list()
     for idx, each in enumerate(feature_selection):
-        if each not in table_label:
+        if "_x_" in each:
+            feature_list = each.split("_x_")
+            for each_feature in feature_list:
+                if each_feature not in table_label:
+                    pop_list.append(idx)
+                    break
+        elif each not in table_label:
             print("%s isn't record in db" % each)
-            feature_selection.pop(idx)
+            pop_list.append(idx)
+
+    pop_list.reverse()
+
+    for idx in pop_list:
+        feature_selection.pop(idx)
     print("# ----------------------------------------------------------------")
     print("#")
     print("# feature_selection: ", feature_selection)
@@ -336,7 +356,8 @@ def label_exist_check(feature_selection, table_label):
 
 
 # new version (y_d_h_data: site-year-month-day-hour-minute<list of second>)
-def read_hybrid_data_map(site, feature_selection, date_range=[2014, 2015],
+# global or local, once each time
+def read_global_or_local_data_map(site, feature_selection, date_range=[2014, 2015],
                          beginning='1/1', finish='12/31', table_name="ncsist_data", path='None'):
     # path: 'db' or filepath
     # load data from files
@@ -524,6 +545,399 @@ def read_hybrid_data_map(site, feature_selection, date_range=[2014, 2015],
     return np.array(feature_tensor_list)
 
 
+# new version (y_d_h_data: site-year-month-day-hour-minute<list of second>)
+# global and local simultaneously
+# ----------------------------------------------------------------------------------------------------------------------
+def create_map(year, month, day, each_hour, each_minute, site, y_d_h_data, feature_selection, num_of_missing, total_number):
+    each_date = str(month) + '/' + str(day + 1)
+
+    # Construct feature vector
+    time_feature = list()
+    time_feature += convert_polar_to_cartesian(
+        time_to_angle('%s/%s' % (year, each_date))[-1])  # day of year
+    time_feature += convert_polar_to_cartesian(
+        return_weekday(int(year), month, int(day + 1)))  # day of week
+    time_feature += convert_polar_to_cartesian(
+        float(each_hour) / 24 * 360)  # time of day
+
+    feature_tensor = np.zeros(shape=(site.shape + ((6 + len(feature_selection) + 1),)), dtype=float)
+
+    site_names = list(site.adj_map.keys())
+    for site_name in site_names:
+        map_index = site.adj_map[site_name]
+
+        # Set time feature
+        feature_tensor[map_index[0], map_index[1], 0:6] = np.array(time_feature)
+
+        # Set feature vector(with checking missing of whole site)
+        # if not (site_name in y_d_h_data):
+        #     # All features should be set to nan_signal
+        #     feature_tensor[map_index[0], map_index[1], 6:-1] = nan_signal
+        #     num_of_missing += len(feature_selection)
+        #     total_number += len(feature_selection)
+        # else:
+        #     feature_index = 0
+        #     for feature_elem in feature_selection:
+        #         feature_index += 1
+        #         if feature_elem == 'WIND_DIREC':
+        #             try:
+        #                 feature = float(y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
+        #                                 [feature_elem])
+        #                 if np.isnan(feature) or feature < 0:
+        #                     feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+        #                     feature_tensor[map_index[0], map_index[1], (5 + feature_index + 1)] = nan_signal
+        #                     num_of_missing += 1
+        #                     total_number += 1
+        #                 else:
+        #                     xy_coord = convert_polar_to_cartesian(feature)
+        #                     feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = xy_coord[0]
+        #                     feature_tensor[map_index[0], map_index[1], (5 + feature_index + 1)] = xy_coord[1]
+        #                     total_number += 1
+        #             except:
+        #                 feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+        #                 feature_tensor[map_index[0], map_index[1], (5 + feature_index + 1)] = nan_signal
+        #                 num_of_missing += 1
+        #                 total_number += 1
+        #         elif feature_elem.find('_x_') > 0:
+        #             feature_elems = feature_elem.split('_x_')
+        #             try:
+        #                 mul_feature = 1
+        #                 features = np.zeros(shape=(len(feature_elems)))
+        #                 for i_elem in range(len(feature_elems)):
+        #                     features[i_elem] = float(
+        #                         y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
+        #                         [feature_elems[i_elem]])
+        #                     mul_feature *= features[i_elem]
+        #                 if [i for i in features if np.isnan(i)] or [i for i in features if i < 0]:
+        #                     feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+        #                     num_of_missing += 1
+        #                     total_number += 1
+        #                 else:
+        #                     feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = mul_feature
+        #                     total_number += 1
+        #             except:
+        #                 feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+        #                 num_of_missing += 1
+        #                 total_number += 1
+        #
+        #         else:
+        #             try:
+        #                 feature = float(y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
+        #                                 [feature_elem])
+        #                 if np.isnan(feature) or feature < 0:
+        #                     feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+        #                     num_of_missing += 1
+        #                     total_number += 1
+        #                 else:
+        #                     feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = feature
+        #                     total_number += 1
+        #             except:
+        #                 feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+        #                 num_of_missing += 1
+        #                 total_number += 1
+
+        # Set feature vector(without checking missing of whole site)
+        feature_index = 0
+        for feature_elem in feature_selection:
+            feature_index += 1
+            ##############################################################################################################
+            if feature_elem == 'WIND_DIREC':
+                try:
+                    feature = float(y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
+                                    [feature_elem])
+                    if np.isnan(feature) or feature < 0:
+                        feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+                        feature_tensor[map_index[0], map_index[1], (5 + feature_index + 1)] = nan_signal
+                        num_of_missing += 1
+                        total_number += 1
+                    else:
+                        xy_coord = convert_polar_to_cartesian(feature)
+                        feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = xy_coord[0]
+                        feature_tensor[map_index[0], map_index[1], (5 + feature_index + 1)] = xy_coord[1]
+                        total_number += 1
+                except:
+                    feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+                    feature_tensor[map_index[0], map_index[1], (5 + feature_index + 1)] = nan_signal
+                    num_of_missing += 1
+                    total_number += 1
+            elif feature_elem.find('_x_') > 0:
+                feature_elems = feature_elem.split('_x_')
+                try:
+                    mul_feature = 1
+                    features = np.zeros(shape=(len(feature_elems)))
+                    for i_elem in range(len(feature_elems)):
+                        features[i_elem] = float(
+                            y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
+                            [feature_elems[i_elem]])
+                        mul_feature *= features[i_elem]
+                    if [i for i in features if np.isnan(i)] or [i for i in features if i < 0]:
+                        feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+                        num_of_missing += 1
+                        total_number += 1
+                    else:
+                        feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = mul_feature
+                        total_number += 1
+                except:
+                    feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+                    num_of_missing += 1
+                    total_number += 1
+
+            else:
+                try:
+                    feature = float(y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
+                                    [feature_elem])
+                    if np.isnan(feature) or feature < 0:
+                        feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+                        num_of_missing += 1
+                        total_number += 1
+                    else:
+                        feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = feature
+                        total_number += 1
+                except:
+                    feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+                    num_of_missing += 1
+                    total_number += 1
+            ##############################################################################################################
+
+    return feature_tensor, num_of_missing, total_number
+
+
+def read_hybrid_data_map(site, feature_selection, date_range=[2014, 2015],
+                         beginning='1/1', finish='12/31', path='None', global_site_lock="龍潭"):
+    # lock site of global to "龍潭"
+
+    # check forms of parameter
+    if len(feature_selection) != 2:
+        print("error: feature_selection, feature_selection must include both EPA and ncsist, two element totally")
+        exit()
+    if path != 'None' and len(path) != 2:
+        print("error: path, path must include both EPA and ncsist, two element totally")
+        exit()
+
+    # path: 'db' or filepath
+    # path[0]: EPA
+    # path[1]: ncsist
+    EPA_path = path[0]
+    ncsist_path = path[1]
+
+    # feature_selection[0]: EPA
+    # feature_selection[1]: ncsist
+    EPA_feature_selection = feature_selection[0]
+    ncsist_feature_selection = feature_selection[1]
+
+    # load data from files
+    # ------------------- un-finish: ncsist
+    if os.path.exists(EPA_path):
+        print("load files ..")
+        pickle_dir = os.path.join(os.path.curdir, "..", "..", "dataset", "AirQuality_EPA", "pickle")
+
+        pickle_exist_flag = 1
+        for each_site in list(site.adj_map.keys()):
+            if not os.path.exists(os.path.join(pickle_dir, '%s_db' % each_site)):
+                pickle_exist_flag = 0
+        if pickle_exist_flag:
+            y_d_h_data = dict()
+            for site_name in list(site.adj_map.keys()):
+                y_d_h_data[site_name] = pickle.load(open(os.path.join(pickle_dir, '%s_db' % site_name), 'rb'))
+            print()
+        else:
+            db_data = global_data_reader(path)
+            y_d_h_data = db_to_dict(db_data)
+            for site_name in y_d_h_data:
+                pickle.dump(y_d_h_data[site_name], open(os.path.join(pickle_dir, '%s_db' % site_name), 'wb'))
+            # exit()  # only for create pickle file of temp_db
+    # -------------------
+
+    # load data from db
+    # -------------------
+    # connect MySQL
+    else:
+        time_range = ["%d-%s-%s" % (date_range[0], beginning.split('/')[0], beginning.split('/')[1]),
+                      "%d-%s-%s" % (date_range[-1], finish.split('/')[0], finish.split('/')[1])]
+        time_range = [str(datetime.datetime.strptime(time_point, "%Y-%m-%d").date()) for time_point in time_range]
+
+        print("connect db .. ")
+        db = MySQLdb.connect(host=db_config["host"],
+                             user=db_config["user"], passwd=db_config["passwd"], db=db_config["db"])
+
+        # EPA
+        table_name = "AirDataTable"
+        EPA_db = load_db(db, table_name=table_name, time_range=time_range)
+
+        if not len(EPA_db):
+            print("no data in AirDataTable")
+            exit()
+
+        EPA_dict = db_to_dict(EPA_db)
+
+        # ncsist
+        table_name = "ncsist_data"
+        ncsist_db = load_db(db, table_name=table_name, time_range=time_range)
+
+        if not len(ncsist_db):
+            print("no data in ncsist_data")
+            exit()
+
+        ncsist_dict = db_to_dict(ncsist_db)
+
+        db.close()
+
+        y_d_h_data = {**EPA_dict, **ncsist_dict}
+
+    # -------------------
+    EPA_feature_selection = label_exist_check(EPA_feature_selection, list(EPA_db[0].keys()))
+    ncsist_feature_selection = label_exist_check(ncsist_feature_selection, list(ncsist_db[0].keys()))
+
+    num_of_missing = 0.
+    total_number = 0.
+    fake_data_count = 0.
+    EPA_feature_tensor_list = []
+    ncsist_feature_tensor_list = []
+
+    for year in date_range:
+        print('%s .. ' % year)
+        # days = 0
+
+        for month in range(1, 13):
+
+            # Check the exceeding of the duration
+            if year == int(date_range[0]) and month < int(beginning[:beginning.index('/')]):  # start
+                continue
+            elif year == int(date_range[-1]) and month > int(finish[:finish.index('/')]):  # dead line
+                continue
+
+            # Set the number of days in a month
+            if (month == 4) or (month == 6) or (month == 9) or (month == 11):
+                days = 30
+            elif month == 2:
+                # random choose two data to check whether 2/29 exist in this year
+                if '2/29' in y_d_h_data[site.site_name][str(year)]:
+                    days = 29
+                else:
+                    days = 28
+            else:
+                days = 31
+
+            for day in range(days):
+                each_date = str(month) + '/' + str(day + 1)
+
+                # Check whether time of data belong to the duration of time_range
+                # -----------------------
+                if (year == int(date_range[0])) and (month == int(beginning[:beginning.index('/')])) and (
+                            (day+1) < int(beginning[(beginning.index('/')+1):])):  # start
+                    continue
+                elif (year == int(date_range[-1])) and month == int(finish[:finish.index('/')]) and (
+                            (day+1) > int(finish[(finish.index('/')+1):])):  # dead line
+                    continue
+                # -----------------------
+
+                for each_hour in range(24):
+                    for each_minute in range(60):
+                        # missing check ----------------------------------------------------------------un-finish
+                        # ---------------------------
+                        missing_flag = 0
+                        # EPA checking
+                        for site_name in site_map2()[global_site_lock].adj_map.keys():
+                            if str(year) not in y_d_h_data[site_name]:
+                                missing_flag = 1
+                                num_of_missing += 1
+                                total_number += 1
+                                break
+
+                            if each_date not in y_d_h_data[site_name][str(year)]:
+                                # missing_flag = 1
+                                num_of_missing += 1
+                                total_number += 1
+                                # create fake nan dict for following check
+                                y_d_h_data[site_name][str(year)][each_date] = fake_dict_date_global
+                                break
+
+                            if str(each_hour) not in y_d_h_data[site_name][str(year)][each_date]:
+                                # missing_flag = 1
+                                num_of_missing += 1
+                                total_number += 1
+                                # create fake nan dict for following check
+                                fake_data_count += 1
+                                y_d_h_data[site_name][str(year)][each_date][str(each_hour)] = {'0': [fake_dict_global]}
+                                break
+
+                            # minimum unit of measurement of EPA is "hour", so only one "minute data" each hour
+                            if "0" not in y_d_h_data[site_name][str(year)][each_date][str(each_hour)]:
+                                # missing_flag = 1
+                                num_of_missing += 1
+                                total_number += 1
+                                # create fake nan dict for following check
+                                fake_data_count += 1
+                                y_d_h_data[site_name][str(year)][each_date][str(each_hour)]['0'] = [fake_dict_global]
+                                break
+                        if missing_flag:
+                            #############################################################################################
+                            # missing data of this site this time
+                            # create a site_name"NaN" data for following checking to delete
+                            #############################################################################################
+                            continue
+
+                        # ncsist checking
+                        for site_name in site.adj_map.keys():
+                            if str(year) not in y_d_h_data[site_name]:
+                                missing_flag = 1
+                                num_of_missing += 1
+                                total_number += 1
+                                break
+
+                            if each_date not in y_d_h_data[site_name][str(year)]:
+                                # missing_flag = 1
+                                num_of_missing += 1
+                                total_number += 1
+                                # create fake nan dict for following check
+                                y_d_h_data[site_name][str(year)][each_date] = fake_dict_date_local
+                                break
+
+                            if str(each_hour) not in y_d_h_data[site_name][str(year)][each_date]:
+                                # missing_flag = 1
+                                num_of_missing += 1
+                                total_number += 1
+                                # create fake nan dict for following check
+                                fake_data_count += 1
+                                y_d_h_data[site_name][str(year)][each_date][str(each_hour)] = {'0': [fake_dict_local]}
+                                break
+
+                            if str(each_minute) not in y_d_h_data[site_name][str(year)][each_date][str(each_hour)]:
+                                # missing_flag = 1
+                                num_of_missing += 1
+                                total_number += 1
+                                # create fake nan dict for following check
+                                fake_data_count += 1
+                                y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)] = [fake_dict_local]
+                                break
+                        if missing_flag:
+                            #############################################################################################
+                            # missing data of this site this time
+                            # create a "NaN" data for following checking to delete
+                            #############################################################################################
+                            continue
+
+                        total_number += 1
+                        # ---------------------------
+
+                        # EPA
+                        # minimum unit of measurement of EPA is "hour", but for ncsist is minute
+                        EPA_feature_tensor, num_of_missing, total_number = create_map(year, month, day, each_hour, "0", site_map2()[global_site_lock], y_d_h_data, EPA_feature_selection, num_of_missing, total_number)
+
+                        # ncsist
+                        ncsist_feature_tensor, num_of_missing, total_number = create_map(year, month, day, each_hour, each_minute, site, y_d_h_data, ncsist_feature_selection, num_of_missing, total_number)
+
+                        EPA_feature_tensor_list.append(EPA_feature_tensor)
+                        ncsist_feature_tensor_list.append(ncsist_feature_tensor)
+
+    # print('fake_data_count: %.5f' % fake_data_count)
+    # print('num_of_missing: %.5f' % num_of_missing)
+    # print('total_number: %.5f' % total_number)
+    print('Missing rate: %.5f' % (num_of_missing/total_number))
+    return np.array(EPA_feature_tensor_list), np.array(ncsist_feature_tensor_list)
+# ----------------------------------------------------------------------------------------------------------------------
+
+
 # def read_local_data_map(path, site, feature_selection, date_range=["2014-1-1-00:00:00", "2015-12-31-23:59:59"], update=False):
 #     all_data_list = local_data_reader(path, date_range)
 #
@@ -532,7 +946,7 @@ def read_hybrid_data_map(site, feature_selection, date_range=[2014, 2015],
 
 """
 def read_data_sets(sites=['中山', '古亭', '士林', '松山', '萬華'], date_range=['2014', '2015'],
-                   feature_selection=['PM2.5'], beginning='1/1', finish='12/31',
+                   feature_selection=['PM2_5'], beginning='1/1', finish='12/31',
                    path=root_path+'dataset/', update=False):
     # print('Reading data .. ')
 
@@ -653,6 +1067,7 @@ def construct_time_map(X, n_steps):
 
 
 def construct_time_map2(X, train_seq_seg):
+    # create time series
     # X: input 4d-tensor
     # train_seq_seg: e.g., [(6, 1), (24, 2), (48, 3), (96, 6), (192, 12)]
     # Y: output 5d-tensor
@@ -677,6 +1092,39 @@ def construct_time_map2(X, train_seq_seg):
                 sum_for_avg = 0
         Y.append(y)
     return np.array(Y)
+
+
+def construct_time_map_with_label(X, label, train_seq_seg, time_unit=1):
+    # create time series
+    # X: input 4d-tensor
+    # train_seq_seg: e.g., [(6, 1), (24, 2), (48, 3), (96, 6), (192, 12)]
+    # Y: output 5d-tensor
+    # y are the elements of Y
+    length = len(X) - train_seq_seg[-1][0]
+    Y = []
+    new_label = []
+    for i in range(0, length, time_unit):
+        y = []
+        for j in range(len(train_seq_seg) - 1):
+            seg_idx = len(train_seq_seg) - j - 1
+            sum_for_avg = 0
+            for idx in range(train_seq_seg[seg_idx][0], train_seq_seg[seg_idx-1][0], -1):
+                sum_for_avg += X[i + train_seq_seg[-1][0] - idx]
+                if (idx-1) % train_seq_seg[seg_idx][1] == 0:
+                    y.append(sum_for_avg / train_seq_seg[seg_idx][1])
+                    sum_for_avg = 0
+        sum_for_avg = 0
+        # sum_for_avg_label = 0
+        for idx in range(train_seq_seg[0][0], 0, -1):
+            sum_for_avg += X[i + train_seq_seg[-1][0] - idx]
+            if (idx-1) % train_seq_seg[0][1] == 0:
+                y.append(sum_for_avg / train_seq_seg[0][1])
+                sum_for_avg = 0
+        Y.append(y)
+        # get label
+        # new_label.append(label[i])
+        new_label.append(topK_next_interval(label[i:i+train_seq_seg[0][1]], train_seq_seg[0][1], 10)[0])
+    return np.array(Y), np.array(new_label)
 
 
 def construct_time_steps(X, n_steps):
@@ -706,46 +1154,79 @@ def construct_second_time_steps(X, n_steps_layer1, n_steps_layer2):
     return Y
 
 
-if __name__ == "__main__":
-    from utility.reader import read_hybrid_data_map
-
-    # --------- EPA testing
-    # EPA_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a88870/AirQuality/dataset/AirQuality_EPA/Data_of_Air_Pollution"
-    #
-    # training_year = [2014, 2015]  # change format from   2014-2015   to   ['2014', '2015']
-    # training_duration = ['1/1', '12/31']
-    #
-    # ------------------------------------------------------------------------------------------------------------------
-    # kinds of pollution in AirQuality EPA DB:
-    #  'PSI', 'MajorPollutant', 'So2', 'CO', 'O3', 'PM10', 'PM2_5', 'NO2', 'WindSpeed', 'WindDirec', 'FPMI', 'NOx', 'NO'
-    # ------------------------------------------------------------------------------------------------------------------
-    # pollution_kind = ['PM2.5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
-    #                   'PM2.5_x_O3', 'PM2.5_x_CO', 'PM2.5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP', 'CO_x_NOx',
-    #                   'WIND_SPEED', 'WIND_DIREC']
-    #
-    # target_site = pollution_site_map2["古亭"]
-    #
-    # read_hybrid_data_map(site=target_site, feature_selection=pollution_kind,
-    #                      date_range=np.atleast_1d(training_year), beginning=training_duration[0],
-    #                      finish=training_duration[-1], table_name="AirDataTable")
-
-    # --------- ncsist testing
-    ncsist_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a88870/AirQuality/dataset/PM25Data_forAI_0903-0930"
-    training_year = [2018, 2018]  # change format from   2014-2015   to   ['2014', '2015']
-    training_duration = ['9/1', '9/30']
-
-    if training_year[0] == training_year[-1]:
-        training_year.pop(0)
-
-    # ------------------------------------------------------------------------------------------------------------------
-    # kinds of pollution in AirQuality ncsist DB:
-    #  'AMB_TEMP', 'PM2.5', 'RH', 'WIND_SPEED', 'WIND_DIREC'
-    # ------------------------------------------------------------------------------------------------------------------
-    pollution_kind = ['AMB_TEMP', 'PM2_5', 'RH', 'WIND_SPEED', 'WIND_DIREC']
-
-    target_site = pollution_site_local_map["Node_09"]
-
-    read_hybrid_data_map(site=target_site, feature_selection=pollution_kind,
-                         date_range=np.atleast_1d(training_year), beginning=training_duration[0],
-                         finish=training_duration[-1], table_name="ncsist_data")
-    exit()
+# if __name__ == "__main__":
+#     # from utility.reader import read_hybrid_data_map
+#
+#     # --------- EPA testing
+#     """
+#     EPA_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a88870/AirQuality/dataset/AirQuality_EPA/Data_of_Air_Pollution"
+#
+#     training_year = [2014, 2015]  # change format from   2014-2015   to   ['2014', '2015']
+#     training_duration = ['1/1', '12/31']
+#
+#     if training_year[0] == training_year[-1]:
+#         training_year.pop(0)
+#
+#     # ------------------------------------------------------------------------------------------------------------------
+#     # kinds of pollution in AirQuality EPA DB:
+#     #  'PSI', 'MajorPollutant', 'So2', 'CO', 'O3', 'PM10', 'PM2_5', 'NO2', 'WindSpeed', 'WindDirec', 'FPMI', 'NOx', 'NO'
+#     # ------------------------------------------------------------------------------------------------------------------
+#     pollution_kind = ['PM2_5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
+#                       'PM2_5_x_O3', 'PM2_5_x_CO', 'PM2_5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP', 'CO_x_NOx',
+#                       'WIND_SPEED', 'WIND_DIREC']
+#
+#     target_site = pollution_site_map2["古亭"]
+#
+#     a = read_global_or_local_data_map(site=target_site, feature_selection=pollution_kind,
+#                                       date_range=np.atleast_1d(training_year), beginning=training_duration[0],
+#                                       finish=training_duration[-1], table_name="AirDataTable")
+#     """
+#     # --------- ncsist testing
+#     """
+#     # ncsist_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a88870/AirQuality/dataset/PM25Data_forAI_0903-0930"
+#     training_year = [2018, 2018]  # change format from   2014-2015   to   ['2014', '2015']
+#     training_duration = ['9/1', '9/30']
+#
+#     if training_year[0] == training_year[-1]:
+#         training_year.pop(0)
+#
+#     # ------------------------------------------------------------------------------------------------------------------
+#     # kinds of pollution in AirQuality ncsist DB:
+#     #  'AMB_TEMP', 'PM2_5', 'RH', 'WIND_SPEED', 'WIND_DIREC'
+#     # ------------------------------------------------------------------------------------------------------------------
+#     pollution_kind = ['AMB_TEMP', 'PM2_5', 'RH', 'WIND_SPEED', 'WIND_DIREC']
+#
+#     target_site = pollution_site_local_map["Node_09"]
+#
+#     a = read_global_or_local_data_map(site=target_site, feature_selection=pollution_kind,
+#                                       date_range=np.atleast_1d(training_year), beginning=training_duration[0],
+#                                       finish=training_duration[-1], table_name="ncsist_data")
+#      """
+#
+#
+#     # --------- hybrid testing
+#     training_year = [2018, 2018]  # change format from   2014-2015   to   ['2014', '2015']
+#     training_duration = ['9/2', '9/5']
+#     # training_duration = ['9/1', '9/30']
+#
+#     if training_year[0] == training_year[-1]:
+#         training_year.pop(0)
+#
+#     pollution_kind = [
+#         # EPA
+#         ['PM2_5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
+#          'PM2_5_x_O3', 'PM2_5_x_CO', 'PM2_5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP', 'CO_x_NOx',
+#          'WIND_SPEED', 'WIND_DIREC'],
+#         # ncsist
+#         ['AMB_TEMP', 'PM2_5', 'RH', 'WIND_SPEED', 'WIND_DIREC']
+#     ]
+#     target_site = pollution_site_local_map["Node_09"]
+#     EPA_feature_tensor_list, ncsist_feature_tensor_list = read_hybrid_data_map(site=target_site,
+#                                                                                feature_selection=pollution_kind,
+#                                                                                date_range=np.atleast_1d(training_year),
+#                                                                                beginning=training_duration[0],
+#                                                                                finish=training_duration[-1],
+#                                                                                global_site_lock="龍潭")
+#     EPA_feature_tensor_list = missing_check(EPA_feature_tensor_list)
+#     EPA_feature_tensor_list = construct_time_map2(EPA_feature_tensor_list, [(2*60, 1*60)])
+#     exit()

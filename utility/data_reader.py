@@ -57,8 +57,8 @@ def param_code_to_param_code_no(param_code):
     else:
         print("This param_code doesn't exist.")
 
-EPA_feature_labels = ['SO2', 'CO', 'O3', 'PM10', 'PM2.5', 'NOx', 'NO', 'NO2', 'THC', 'NMHC', 'CH4', 'UVB', 'AMB_TEMP', 'RAINFALL', 'RH', 'WIND_SPEED', 'WIND_DIREC', 'WS_HR', 'WD_HR', 'PH_RAIN', 'RAIN_COND']
-ncsist_feature_labels = ['AMB_TEMP', 'RH', 'PM2.5', 'WIND_DIREC', 'WIND_SPEED']
+EPA_feature_labels = ['SO2', 'CO', 'O3', 'PM10', 'PM2_5', 'NOx', 'NO', 'NO2', 'THC', 'NMHC', 'CH4', 'UVB', 'AMB_TEMP', 'RAINFALL', 'RH', 'WIND_SPEED', 'WIND_DIREC', 'WS_HR', 'WD_HR', 'PH_RAIN', 'RAIN_COND']
+ncsist_feature_labels = ['AMB_TEMP', 'RH', 'PM2_5', 'WIND_DIREC', 'WIND_SPEED']
 
 
 def pollution_to_pollution_no(pollution):
@@ -66,7 +66,7 @@ def pollution_to_pollution_no(pollution):
     elif pollution == 'CO':return 1
     elif pollution == 'O3':return 2
     elif pollution == 'PM10':return 3
-    elif pollution == 'PM2.5':return 4
+    elif pollution == 'PM2_5':return 4
     elif pollution == 'NOx':return 5
     elif pollution == 'NO':return 6
     elif pollution == 'NO2':return 7
@@ -391,7 +391,7 @@ def local_data_reader(dirpath, date_range=None):
                 polution_data['time'] = time_data
                 polution_data['AMB_TEMP'] = AMB_TEMP
                 polution_data['RH'] = RH
-                polution_data['PM2.5'] = PM2_5
+                polution_data['PM2_5'] = PM2_5
                 polution_data['WIND_DIREC'] = WIND_DIREC
                 polution_data['WIND_SPEED'] = WIND_SPEED
 
@@ -403,7 +403,7 @@ def local_data_reader(dirpath, date_range=None):
                 polution_data['time'] = time_data
                 polution_data['AMB_TEMP'] = AMB_TEMP
                 polution_data['RH'] = RH
-                polution_data['PM2.5'] = PM2_5
+                polution_data['PM2_5'] = PM2_5
                 polution_data['WIND_DIREC'] = WIND_DIREC
                 polution_data['WIND_SPEED'] = WIND_SPEED
 

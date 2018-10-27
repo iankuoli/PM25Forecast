@@ -298,6 +298,9 @@ class HybridForecastModel:
         with open(ens_model_path, 'rb') as fr:
             self.ensemble_model = pickle.load(fr)
 
+
+
+
     #
     # Model Inference:
     #
@@ -349,7 +352,8 @@ class HybridForecastModel:
 
         #
         # ------ START: Train global model -----------------------------------------------------------------------------
-        # ---- FULL EPA DATA ----
+        # ---- Pre-train on FULL EPA DATA ----
+        # pretrain == 1 if pre-train data exist
         pretrain = 1
         if x_full is None:
             pretrain = 0
@@ -379,24 +383,8 @@ class HybridForecastModel:
                                              ModelCheckpoint(global_model_path, monitor='val_loss', verbose=0,
                                                              save_best_only=True, save_weights_only=True,
                                                              mode='auto', period=1)])
-            self.global_model.save_weights(global_model_path, overwrite=True)
+            # self.global_model.save_weights(global_model_path, overwrite=True)
 
-        # if not self.is_global_pretrained:
-        #     self.global_model.fit(x=[x_train_global,
-        #                              x_train_global2],
-        #                           y=y_train_global,
-        #                           batch_size=self.global_batch_size,
-        #                           epochs=self.global_epoch,
-        #                           validation_data=([x_test_global,
-        #                                             x_test_global2],
-        #                                            y_test_global),
-        #                           shuffle=True,
-        #                           callbacks=[EarlyStopping(monitor='val_loss', min_delta=0,
-        #                                                    patience=3, verbose=0, mode='auto'),
-        #                                      ModelCheckpoint(global_model_path, monitor='val_loss', verbose=0,
-        #                                                      save_best_only=True, save_weights_only=True,
-        #                                                      mode='auto', period=1)])
-        #     self.global_model.save_weights(global_model_path, overwrite=True)
         # ------ END: Train global model -------------------------------------------------------------------------------
 
         #
@@ -420,13 +408,13 @@ class HybridForecastModel:
                                             ModelCheckpoint(local_model_path, monitor='val_loss', verbose=0,
                                                             save_best_only=True, save_weights_only=True,
                                                             mode='auto', period=1)])
-            self.local_model.save_weights(local_model_path, overwrite=True)
+            # self.local_model.save_weights(local_model_path, overwrite=True)
         # ------ END: Train local model --------------------------------------------------------------------------------
 
         #
         # ------ START: Train XGB model --------------------------------------------------------------------------------
         print('Train XGB ...')
-        self.xgb_model = MultiOutputRegressor(xgb.XGBRegressor(objective='reg:linear')).fit(x_train_xgb, y_train_local)
+        self.xgb_model = MultiOutputRegressor(xgb.XGBRegressor(objective='reg:linear', random_state=1234)).fit(x_train_xgb, y_train_local)
 
         with open(model_xgb_path, 'wb') as fw:
             pickle.dump(self.xgb_model, fw)
@@ -439,7 +427,7 @@ class HybridForecastModel:
         global_nn_predict = self.global_model.predict([x_train_global, x_train_global2])
         local_nn_predict, global_in_local_nn_predict = self.local_model.predict([x_train_local, x_train_local2, x_train_global, x_train_global2])
         x_train_ensemble = np.hstack((x_train_xgb, xgb_predict, global_nn_predict, global_in_local_nn_predict, local_nn_predict))
-        self.ensemble_model = MultiOutputRegressor(xgb.XGBRegressor(objective='reg:linear')).fit(x_train_ensemble, y_train_local)
+        self.ensemble_model = MultiOutputRegressor(xgb.XGBRegressor(objective='reg:linear', random_state=1234)).fit(x_train_ensemble, y_train_local)
 
         with open(model_ensemble_path, 'wb') as fw:
             pickle.dump(self.ensemble_model, fw)
@@ -470,7 +458,7 @@ class HybridForecastModel:
                                          ModelCheckpoint(global_model_path, monitor='val_loss', verbose=0,
                                                          save_best_only=True, save_weights_only=True,
                                                          mode='auto', period=1)])
-        self.global_model.save_weights(global_model_path, overwrite=True)
+        # self.global_model.save_weights(global_model_path, overwrite=True)
         final_time = time.time()
         time_spent_printer(start_time, final_time)
 

@@ -55,12 +55,11 @@ testing_duration = ['9/21', '9/30']
 
 model_root_path = '/media/clliao/006a3168-df49-4b0a-a874-891877a888701/AirQuality/PM25Forecast/ConvLSTM/models'
 # Using model params to constract model's name if model_name == '' or None
-model_name = ''
 
 ##########################################################################################################################
 # predict the target of the subsequent hours as the label
 # Note: change time unit from hour to minute !!!!!!!!!!!!!!!!!!!!!!!!
-interval_hours = 1 #* 60
+interval_hours = 1
 ##########################################################################################################################
 
 # Define model parameters
@@ -79,7 +78,7 @@ global_hyper_params = {
     }
 local_hyper_params = {
         'num_filters': 16,
-        'kernel_size': (3, 3),
+        'kernel_size': (5, 5),
         'regularizer': 1e-7,
         'cnn_dropout': 0.5,
         'r_dropout': 0.5,
@@ -109,12 +108,119 @@ global_output_form = (0, 80, 1, len(global_target_kind))      # Regression (min,
 # Define target site and its adjacent map for prediction
 pollution_site_map2 = site_map2()
 
+#  Move here to avoid getting error in for loop
+#
+# ----- START: Year Processing -------------------------------------------------------------------------------------
+#
+
+# Clear redundant year, i.e., [2014, 2014] ==> [2014]
+if training_year[0] == training_year[-1]:
+    training_year.pop(0)
+if testing_year[0] == testing_year[-1]:
+    testing_year.pop(0)
+
+# Generate years sequence, i.e., [2014, 2016] ==> [2014, 2015, 2016]
+range_of_year = training_year[-1] - training_year[0]
+for i in range(range_of_year):
+    if not (int(i + training_year[0]) in training_year):
+        training_year.insert(i, int(i + training_year[0]))
+
+#
+# ----- END: Year Processing ---------------------------------------------------------------------------------------
+#
+
+# global
+global_site = pollution_site_map2[global_site_lock]  # 龍潭
+global_center_i = int(global_site.shape[0] / 2)
+global_center_j = int(global_site.shape[1] / 2)
+
+# ============================= START: FOR training global model ===========================================================
+# full_training_year = [2017, 2018]  # change format from   2014-2015   to   ['2014', '2015']
+# full_training_duration = ['12/1', '8/31']
+full_training_year = [2017, 2018]  # change format from   2014-2015   to   ['2014', '2015']
+full_training_duration = ['9/1', '8/30']
+
+if full_training_year[0] == full_training_year[-1]:
+    full_training_year.pop(0)
+full_pollution_kind = ['PM2_5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
+                      'PM2_5_x_O3', 'PM2_5_x_CO', 'PM2_5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP', 'CO_x_NOx',
+                      'WIND_SPEED', 'WIND_DIREC']
+
+full_target_site = pollution_site_map2["龍潭"]
+global_full_seq_seg = [(24, interval_hours)]
+# global_full_seq_seg = global_train_seq_seg
+
+X_train_global_full = read_global_or_local_data_map(site=full_target_site, feature_selection=full_pollution_kind,
+                                                    date_range=np.atleast_1d(full_training_year),
+                                                    beginning=full_training_duration[0],
+                                                    finish=full_training_duration[-1], table_name="AirDataTable")
+
+print("missing checking(global_FULL) ..")
+X_train_global_full = missing_check(X_train_global_full)
+print("missing checking(global_FULL) ..")
+Y_train_global_full = np.array(X_train_global_full)[:, global_center_i, global_center_j,
+                      [global_feature_kind_shift + global_pollution_kind.index(i) for i in global_target_kind]]
+# X_train_global_full = construct_time_map2(X_train_global_full[:-1], global_full_seq_seg)
+
+X_train_global_full, Y_train_global_full = construct_time_map_with_label(X_train_global_full[:-1],
+                                                                         Y_train_global_full[:-1],
+                                                                         global_full_seq_seg)
+
+remain_list = []
+for i in range(len(X_train_global_full)):
+    # Check missing or not, if X_train_global[i] is missing, then this command will return True
+    if not np.isnan(np.sum(X_train_global_full[i])):
+        remain_list.append(i)
+X_train_global_full = X_train_global_full[remain_list]
+Y_train_global_full = Y_train_global_full[remain_list]
+
+mean_y_train_global_full = np.zeros(shape=(global_output_form[3],))
+std_y_train_global_full = np.zeros(shape=(global_output_form[3],))
+if global_output_form[2] == 1:
+    for i in range(global_output_form[3]):
+        print('Regression: Normalize Y_train_global[%d] ..' % i)
+        mean_y_train_global_full[i] = np.mean(Y_train_global_full[:, i])
+        std_y_train_global_full[i] = np.std(Y_train_global_full[:, i])
+
+        if not std_y_train_global_full[i]:
+            input("Denominator cannot be 0.")
+        Y_train_global_full[:, i] = np.array(
+            [(y - mean_y_train_global_full[i]) / std_y_train_global_full[i] for y in Y_train_global_full[:, i]])
+        print(
+            'mean_y_train_FULL_global: %f  std_y_train_FULL_global: %f' % (mean_y_train_global_full[i],
+                                                                           std_y_train_global_full[i]))
+
+# Construct corresponding label.
+Y_train_global_full = np.array(
+    [Y_train_global_full[int(global_full_seq_seg[-1][0]/global_full_seq_seg[-1][1]):, i] for i in range(global_output_form[3])]).transpose()
+# Y_train_global_full = np.array(
+#     [topK_next_interval(Y_train_global_full[:, i], interval_hours, 1) for i in range(global_output_form[3])]).transpose()
+#     # [topK_next_interval(Y_train_global_full[:, i], interval_hours, 1) for i in range(global_output_form[3])]).transpose()
+
+# Make
+# ############### Using len() instead of size here #####################
+batch = np.min([len(Y_train_global_full), len(X_train_global_full)])
+X_train_global_full = X_train_global_full[:batch]
+Y_train_global_full = Y_train_global_full[:batch]
+
+# Validation set
+num_split_to_valid_f = int(len(X_train_global_full) * valid_ratio)
+X_valid_global_full = X_train_global_full[-num_split_to_valid_f:]
+Y_valid_global_full = Y_train_global_full[-num_split_to_valid_f:]
+
+# Training set
+X_train_global_full = X_train_global_full[:-num_split_to_valid_f]
+Y_train_global_full = Y_train_global_full[:-num_split_to_valid_f]
+
+# Generate model_input3 from model_input (LSTM)
+X_train_global3_full = X_train_global_full[:, :, global_center_i, global_center_j, :]
+X_valid_global3_full = X_valid_global_full[:, :, global_center_i, global_center_j, :]
+# X_test_global3 = X_test_global[:, :, global_center_i, global_center_j, :]
+# ============================= END: FOR training global model ===========================================================
+
 for target_site_keys in pollution_site_local_map.keys():
+    model_name = ''
     # print(pollution_site_map2[target_site_keys].site_name)
-    # global
-    global_site = pollution_site_map2[global_site_lock]  # 龍潭
-    global_center_i = int(global_site.shape[0] / 2)
-    global_center_j = int(global_site.shape[1] / 2)
 
     # local
     target_site = pollution_site_local_map[target_site_keys]
@@ -123,41 +229,20 @@ for target_site_keys in pollution_site_local_map.keys():
     local = target_site.local
     city = target_site.city
     target_site_name = target_site.site_name
-    site_list = list(target_site.adj_map.keys())  # ['士林', '中山', '松山', '汐止', '板橋', '萬華', '古亭', '土城', '新店']
+    site_list = sorted(list(target_site.adj_map.keys()))  # ['士林', '中山', '松山', '汐止', '板橋', '萬華', '古亭', '土城', '新店']
     map_shape = target_site.shape
 
     # Define pre-processing parameters
 
     #################################################################################################################################
-    global_train_seq_seg = [(24*60, 60)]   # [(12, 1), (24, 2), (48, 3), (72, 6)]
-    local_train_seq_seg = [(24*60, 60)]
+    global_train_seq_seg = [(24*60, interval_hours*60)]   # [(12, 1), (24, 2), (48, 3), (72, 6)]
+    local_train_seq_seg = [(24*60, interval_hours*60)]
     #################################################################################################################################
     train_seq_length = int(global_train_seq_seg[0][0] / global_train_seq_seg[0][1])
     for seg_idx in range(1, len(global_train_seq_seg)):
         train_seq_length += int((global_train_seq_seg[seg_idx][0] - global_train_seq_seg[seg_idx-1][0]) / global_train_seq_seg[seg_idx][1])
     #
     # ----- END: Parameters Declaration --------------------------------------------------------------------------------
-    #
-
-
-    #
-    # ----- START: Year Processing -------------------------------------------------------------------------------------
-    #
-
-    # Clear redundant year, i.e., [2014, 2014] ==> [2014]
-    if training_year[0] == training_year[-1]:
-        training_year.pop(0)
-    if testing_year[0] == testing_year[-1]:
-        testing_year.pop(0)
-
-    # Generate years sequence, i.e., [2014, 2016] ==> [2014, 2015, 2016]
-    range_of_year = training_year[-1] - training_year[0]
-    for i in range(range_of_year):
-        if not(int(i + training_year[0]) in training_year):
-            training_year.insert(i, int(i + training_year[0]))
-
-    #
-    # ----- END: Year Processing ---------------------------------------------------------------------------------------
     #
 
 
@@ -189,90 +274,6 @@ for target_site_keys in pollution_site_local_map.keys():
     X_train_global, X_train_local = read_hybrid_data_map(site=target_site, feature_selection=pollution_kind,
                                    date_range=np.atleast_1d(training_year), beginning=training_duration[0],
                                    finish=training_duration[-1])
-
-    # ============================= START: FOR training global model ===========================================================
-    # full_training_year = [2017, 2018]  # change format from   2014-2015   to   ['2014', '2015']
-    # full_training_duration = ['12/1', '8/31']
-    full_training_year = [2017, 2018]  # change format from   2014-2015   to   ['2014', '2015']
-    full_training_duration = ['9/1', '8/30']
-
-    if full_training_year[0] == full_training_year[-1]:
-        full_training_year.pop(0)
-    full_pollution_kind = ['PM2_5', 'O3', 'SO2', 'CO', 'NOx', 'NO', 'NO2', 'AMB_TEMP', 'RH',
-                          'PM2_5_x_O3', 'PM2_5_x_CO', 'PM2_5_x_NOx', 'O3_x_CO', 'O3_x_NOx', 'O3_x_AMB_TEMP', 'CO_x_NOx',
-                          'WIND_SPEED', 'WIND_DIREC']
-
-    full_target_site = pollution_site_map2["龍潭"]
-    global_full_seq_seg = [(24, 1)]
-    # global_full_seq_seg = global_train_seq_seg
-
-    X_train_global_full = read_global_or_local_data_map(site=full_target_site, feature_selection=full_pollution_kind,
-                                                        date_range=np.atleast_1d(full_training_year),
-                                                        beginning=full_training_duration[0],
-                                                        finish=full_training_duration[-1], table_name="AirDataTable")
-
-    print("missing checking(global_FULL) ..")
-    X_train_global_full = missing_check(X_train_global_full)
-    print("missing checking(global_FULL) ..")
-    Y_train_global_full = np.array(X_train_global_full)[:, global_center_i, global_center_j,
-                          [global_feature_kind_shift + global_pollution_kind.index(i) for i in global_target_kind]]
-    # X_train_global_full = construct_time_map2(X_train_global_full[:-1], global_full_seq_seg)
-
-    X_train_global_full, Y_train_global_full = construct_time_map_with_label(X_train_global_full[:-1],
-                                                                             Y_train_global_full[:-1],
-                                                                             global_full_seq_seg)
-
-    remain_list = []
-    for i in range(len(X_train_global_full)):
-        # Check missing or not, if X_train_global[i] is missing, then this command will return True
-        if not np.isnan(np.sum(X_train_global_full[i])):
-            remain_list.append(i)
-    X_train_global_full = X_train_global_full[remain_list]
-    Y_train_global_full = Y_train_global_full[remain_list]
-
-    mean_y_train_global_full = np.zeros(shape=(global_output_form[3],))
-    std_y_train_global_full = np.zeros(shape=(global_output_form[3],))
-    if global_output_form[2] == 1:
-        for i in range(global_output_form[3]):
-            print('Regression: Normalize Y_train_global[%d] ..' % i)
-            mean_y_train_global_full[i] = np.mean(Y_train_global_full[:, i])
-            std_y_train_global_full[i] = np.std(Y_train_global_full[:, i])
-
-            if not std_y_train_global_full[i]:
-                input("Denominator cannot be 0.")
-            Y_train_global_full[:, i] = np.array(
-                [(y - mean_y_train_global_full[i]) / std_y_train_global_full[i] for y in Y_train_global_full[:, i]])
-            print(
-                'mean_y_train_FULL_global: %f  std_y_train_FULL_global: %f' % (mean_y_train_global_full[i],
-                                                                               std_y_train_global_full[i]))
-
-    # Construct corresponding label.
-    Y_train_global_full = np.array(
-        [Y_train_global_full[int(global_full_seq_seg[-1][0]/global_full_seq_seg[-1][1]):, i] for i in range(global_output_form[3])]).transpose()
-    # Y_train_global_full = np.array(
-    #     [topK_next_interval(Y_train_global_full[:, i], interval_hours, 1) for i in range(global_output_form[3])]).transpose()
-    #     # [topK_next_interval(Y_train_global_full[:, i], interval_hours, 1) for i in range(global_output_form[3])]).transpose()
-
-    # Make
-    # ############### Using len() instead of size here #####################
-    batch = np.min([len(Y_train_global_full), len(X_train_global_full)])
-    X_train_global_full = X_train_global_full[:batch]
-    Y_train_global_full = Y_train_global_full[:batch]
-
-    # Validation set
-    num_split_to_valid_f = int(len(X_train_global_full) * valid_ratio)
-    X_valid_global_full = X_train_global_full[-num_split_to_valid_f:]
-    Y_valid_global_full = Y_train_global_full[-num_split_to_valid_f:]
-
-    # Training set
-    X_train_global_full = X_train_global_full[:-num_split_to_valid_f]
-    Y_train_global_full = Y_train_global_full[:-num_split_to_valid_f]
-
-    # Generate model_input3 from model_input (LSTM)
-    X_train_global3_full = X_train_global_full[:, :, global_center_i, global_center_j, :]
-    X_valid_global3_full = X_valid_global_full[:, :, global_center_i, global_center_j, :]
-    # X_test_global3 = X_test_global[:, :, global_center_i, global_center_j, :]
-    # ============================= END: FOR training global model ===========================================================
 
     print("missing checking(global) ..")
     X_train_global = missing_check(X_train_global)
@@ -317,13 +318,14 @@ for target_site_keys in pollution_site_local_map.keys():
     # X_test_local = construct_time_map2(X_test_local[:-1], local_train_seq_seg)
     ######################################################################################################################
     X_train_global, Y_train_global = construct_time_map_with_label(X_train_global[:-1],
-                                                                   Y_train_global[:-1], global_train_seq_seg)
+                                                                   Y_train_global[:-1], global_train_seq_seg,
+                                                                   time_unit=60)
     X_train_local, Y_train = construct_time_map_with_label(X_train_local[:-1],
-                                                           Y_train[:-1], local_train_seq_seg)
+                                                           Y_train[:-1], local_train_seq_seg, time_unit=60)
     X_test_global, Y_test_global = construct_time_map_with_label(X_test_global[:-1],
-                                                                 Y_test_global[:-1], global_train_seq_seg)
+                                                                 Y_test_global[:-1], global_train_seq_seg, time_unit=60)
     X_test_local, Y_test = construct_time_map_with_label(X_test_local[:-1],
-                                                         Y_test[:-1], local_train_seq_seg)
+                                                         Y_test[:-1], local_train_seq_seg, time_unit=60)
     final_time = time.time()
     time_spent_printer(start_time, final_time)
 
@@ -354,27 +356,50 @@ for target_site_keys in pollution_site_local_map.keys():
     X_train_local = X_train_local[remain_list]
     Y_train = Y_train[remain_list]
     time_spent_printer(start_time, time.time())
+
+    # Delete training data with missing values since label of training data cannot be imputed.
+    # local
+    remain_list = []
+    for i in range(len(Y_train)):
+        # Check missing or not, if X_train_global[i] is missing, then this command will return True
+        if not np.isnan(np.sum(Y_train[i])):
+            remain_list.append(i)
+    X_train_global = X_train_global[remain_list]
+    Y_train_global = Y_train_global[remain_list]
+    X_train_local = X_train_local[remain_list]
+    Y_train = Y_train[remain_list]
+    # global
+    remain_list = []
+    for i in range(len(Y_train_global)):
+        # Check missing or not, if X_train_local[i] is missing, then this command will return True
+        if not np.isnan(np.sum(Y_train_global[i])):
+            remain_list.append(i)
+    X_train_global = X_train_global[remain_list]
+    Y_train_global = Y_train_global[remain_list]
+    X_train_local = X_train_local[remain_list]
+    Y_train = Y_train[remain_list]
     ##############################################################################################################################################################
 
     # Regression: Normalize the dependent variable Y in the training dataset.
-    # mean_y_train = np.zeros(shape=(local_output_form[3],))
-    # std_y_train = np.zeros(shape=(local_output_form[3],))
+    mean_y_train = np.zeros(shape=(local_output_form[3],))
+    std_y_train = np.zeros(shape=(local_output_form[3],))
     #
     # mean_y_train_global = np.zeros(shape=(global_output_form[3],))
     # std_y_train_global = np.zeros(shape=(global_output_form[3],))
 
     # Regression: Normalize the dependent variable Y in the history EPA dataset.
-    mean_y_train = mean_y_train_global_full
-    std_y_train = std_y_train_global_full
+    # mean_y_train = mean_y_train_global_full
+    # std_y_train = std_y_train_global_full
 
     mean_y_train_global = mean_y_train_global_full
     std_y_train_global = std_y_train_global_full
+
     if local_output_form[2] == 1:
         for i in range(local_output_form[3]):
             print('Regression: Normalize Y_train[%d] (Y_train_local) ..' % i)
 
-            # mean_y_train[i] = np.mean(Y_train[:, i])
-            # std_y_train[i] = np.std(Y_train[:, i])
+            mean_y_train[i] = np.mean(Y_train[:, i])
+            std_y_train[i] = np.std(Y_train[:, i])
 
             if not std_y_train[i]:
                 input("Denominator cannot be 0.")
@@ -448,6 +473,31 @@ for target_site_keys in pollution_site_local_map.keys():
     # -----------------------------------------------------------------------------##################################################
     # local
     remain_list = []
+    for i in range(len(X_test_local)):
+        # Check missing or not, if X_train_global[i] is missing, then this command will return True
+        if not np.isnan(np.sum(X_test_local[i])):
+            remain_list.append(i)
+    Y_test = Y_test[remain_list]
+    Y_real = Y_real[remain_list]
+    X_test_local = X_test_local[remain_list]
+    Y_test_global = Y_test_global[remain_list]
+    Y_real_global = Y_real_global[remain_list]
+    X_test_global = X_test_global[remain_list]
+    # global
+    remain_list = []
+    for i in range(len(X_test_global)):
+        # Check missing or not, if X_train_local[i] is missing, then this command will return True
+        if not np.isnan(np.sum(X_test_global[i])):
+            remain_list.append(i)
+    Y_test = Y_test[remain_list]
+    Y_real = Y_real[remain_list]
+    X_test_local = X_test_local[remain_list]
+    Y_test_global = Y_test_global[remain_list]
+    Y_real_global = Y_real_global[remain_list]
+    X_test_global = X_test_global[remain_list]
+    # -----------------------------------------------------------------------------
+    # local
+    remain_list = []
     for i in range(len(Y_test)):
         # Check missing or not, if X_train_global[i] is missing, then this command will return True
         if not np.isnan(np.sum(Y_test[i])):
@@ -470,34 +520,6 @@ for target_site_keys in pollution_site_local_map.keys():
     Y_test_global = Y_test_global[remain_list]
     Y_real_global = Y_real_global[remain_list]
     X_test_global = X_test_global[remain_list]
-    # -----------------------------------------------------------------------------
-
-    # # local
-    # i = 0
-    # while i < len(Y_test):
-    #     # Check missing or not, if Y_test[i] is missing, then this command will return True
-    #     if np.isnan(sum(Y_test[i])):
-    #         Y_test = np.delete(Y_test, i, 0)
-    #         Y_real = np.delete(Y_real, i, 0)
-    #         X_test = np.delete(X_test, i, 0)
-    #         Y_test_global = np.delete(Y_test_global, i, 0)
-    #         Y_real_global = np.delete(Y_real_global, i, 0)
-    #         X_test_global = np.delete(X_test_global, i, 0)
-    #         i = -1
-    #     i += 1
-    # # global
-    # i = 0
-    # while i < len(Y_test_global):
-    #     # Check missing or not, if Y_test[i] is missing, then this command will return True
-    #     if np.isnan(sum(Y_test_global[i])):
-    #         Y_test = np.delete(Y_test, i, 0)
-    #         Y_real = np.delete(Y_real, i, 0)
-    #         X_test = np.delete(X_test, i, 0)
-    #         Y_test_global = np.delete(Y_test_global, i, 0)
-    #         Y_real_global = np.delete(Y_real_global, i, 0)
-    #         X_test_global = np.delete(X_test_global, i, 0)
-    #         i = -1
-    #     i += 1
     # -----------------------------------------------------------------------------#################################################
 
     print('Delete invalid testing data, remain ', len(Y_test), 'test sequences')
@@ -609,7 +631,7 @@ for target_site_keys in pollution_site_local_map.keys():
     X_test_XGB = np.zeros(shape=(X_test_local.shape[0], X_test_local.shape[1], len(target_site.adj_map) * X_test_local.shape[4]),
                           dtype='float32')
     indx = 0
-    for i in target_site.adj_map:
+    for i in site_list:
         (x, y) = target_site.adj_map[i]
         X_train_XGB[:, :, indx*X_test_local.shape[4]:(indx+1)*X_test_local.shape[4]] = X_train_local[:, :, x, y, :]
         X_test_XGB[:, :, indx*X_test_local.shape[4]:(indx+1)*X_test_local.shape[4]] = X_test_local[:, :, x, y, :]
@@ -680,11 +702,13 @@ for target_site_keys in pollution_site_local_map.keys():
                               training_end_point, interval_hours))
 
     check_folder2(os.path.join(model_root_path, model_name))
+    check_folder2(os.path.join(model_root_path, model_name, 'eval_rlt'))
 
     # Save parameters
     save_params = {'interval_hours': interval_hours, 'norm_params': norm_params,
                    'global_hyper_params': global_hyper_params, 'local_hyper_params': local_hyper_params,
-                   'global_train_seq_seg': global_train_seq_seg, 'local_train_seq_seg': local_train_seq_seg}
+                   'global_train_seq_seg': global_train_seq_seg, 'local_train_seq_seg': local_train_seq_seg,
+                   'global_pollution_kind': global_pollution_kind, 'local_pollution_kind': local_pollution_kind}
     with open(os.path.join(model_root_path, model_name, 'model_conf.json'), 'w') as f:
         json.dump(save_params, f)
 
@@ -715,6 +739,9 @@ for target_site_keys in pollution_site_local_map.keys():
 
     # Set label normalization parameters
     f_model.set_norm(norm_params)
+
+    print('num of testing data:{0}'.format(len(X_test_XGB)))
+
     # Inference
     pred, global_pred = f_model.evaluate(x_test_xgb=X_test_XGB, x_test_global=X_test_global,
                                          x_test_global2=X_test_global3,
@@ -722,18 +749,33 @@ for target_site_keys in pollution_site_local_map.keys():
 
     print()
 
-    mse = np.mean((Y_real - pred) ** 2)
-    print('local testing MSE:{0}'.format(mse))
+    l_rmse = np.sqrt(np.mean((Y_real - pred) ** 2))
+    print('local testing RMSE:{0}'.format(l_rmse))
     # Save evaluate result csv file
-    with open('/media/clliao/006a3168-df49-4b0a-a874-891877a888701/TCH/pm25_rlt/local_rlt.csv', 'w') as f:
+    with open(os.path.join(model_root_path, model_name, 'eval_rlt', 'local_rlt.csv'), 'w') as f:
         f.write('real,pred\n')
         for i in range(len(Y_real)):
             f.write('{0},{1}\n'.format(Y_real[i][0], pred[i][0]))
 
-    mse = np.mean((Y_real_global - global_pred) ** 2)
-    print('global testing MSE:{0}'.format(mse))
+    g_rmse = np.sqrt(np.mean((Y_real_global - global_pred) ** 2))
+    print('global testing RMSE:{0}'.format(g_rmse))
 
-    with open('/media/clliao/006a3168-df49-4b0a-a874-891877a888701/TCH/pm25_rlt/global_rlt.csv', 'w') as f:
+    with open(os.path.join(model_root_path, model_name, 'eval_rlt', 'global_rlt.csv'), 'w') as f:
         f.write('real,pred\n')
         for i in range(len(Y_real_global)):
             f.write('{0},{1}\n'.format(Y_real_global[i][0], global_pred[i][0]))
+
+    with open(os.path.join(model_root_path, model_name, 'eval_rlt', 'rmse.txt'), 'w') as f:
+        f.write('training_duration:\n{0}\n'.format(training_duration))
+        f.write('testing_duration:\n{0}\n'.format(testing_duration))
+        f.write('local_pollution_kind:\n{0}\n'.format(local_pollution_kind))
+        f.write('global_pollution_kind:\n{0}\n'.format(global_pollution_kind))
+
+        f.write('mean_y_train_local:\n{0}\n'.format(mean_y_train))
+        f.write('std_y_train_local:\n{0}\n'.format(std_y_train))
+        f.write('mean_y_train_global:\n{0}\n'.format(mean_y_train_global))
+        f.write('std_y_train_global:\n{0}\n'.format(std_y_train_global))
+
+        f.write('local rmse:{0}\n'.format(l_rmse))
+        f.write('global rmse:{0}\n'.format(g_rmse))
+
