@@ -27,16 +27,18 @@ def insert_to_db(db, insert_data):
 
 
 def load_db(db, table_name, time_range=['2018-09-01', '2018-09-30']):
-
+    # force added dead line for catching right time.
+    if len(time_range[1]) <= 10:
+        time_range[1] += ' 23:59:59'
     cursor = db.cursor()
 
     # execute MySQL search command
     print("search data(%s) .. " % table_name)
-    if table_name == "AirDataTable":
-        cmd_str = """SELECT * FROM %s where PublishTime >= "%s" and PublishTime <= "%s" order by PublishTime ASC""" % (
+    if table_name == "AirDataTable" or table_name == "AirDataTableNcsist":
+        cmd_str = """SELECT * FROM %s where PublishTime between "%s" and "%s" order by PublishTime ASC""" % (
             table_name, time_range[0], time_range[1])
     elif table_name == "ncsist_data":
-        cmd_str = """SELECT * FROM %s where time >= "%s" and time <= "%s" order by time ASC""" % (
+        cmd_str = """SELECT * FROM %s where time between "%s" and "%s" order by time ASC""" % (
             table_name, time_range[0], time_range[1])
         # sqlStr = "select * from AirDataTable where PublishTime > '" + startTimeStr + "' order by PublishTime ASC"
 
@@ -58,7 +60,10 @@ def load_db(db, table_name, time_range=['2018-09-01', '2018-09-30']):
                 db_data[-1]["site"] = each_data[label_idx]
 
             elif each_label == "PublishTime":  # EPA
-                db_data[-1]["time"] = datetime.datetime.strptime(each_data[label_idx], "%Y-%m-%d %H:%M")
+                try:
+                    db_data[-1]["time"] = datetime.datetime.strptime(each_data[label_idx], "%Y-%m-%d %H:%M")
+                except:
+                    db_data[-1]["time"] = datetime.datetime.strptime(each_data[label_idx], "%Y-%m-%d %H:%M:%S")
             elif each_label == "time":  # ncsist
                 db_data[-1][each_label] = datetime.datetime.strptime(each_data[label_idx], "%Y-%m-%d %H:%M:%S")
 
@@ -85,23 +90,24 @@ def load_db(db, table_name, time_range=['2018-09-01', '2018-09-30']):
 
     return db_data
 
-if __name__ == "__main__":
-
-    # ncsist_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a888701/AirQuality/dataset/PM25Data_forAI_0903-0930"
-    ncsist_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a888701/AirQuality/dataset/PM25Data_forAI_1001-1023"
-    #
-    ncsist_polution_db = local_data_reader(ncsist_data_dir)
-    # print("total data: %d" % len(ncsist_polution_db))
-
-    # connect MySQL
-    print("connect db .. ")
-    db = MySQLdb.connect(host=db_config["host"],
-                         user=db_config["user"], passwd=db_config["passwd"], db=db_config["db"])
-
-    insert_to_db(db, insert_data=ncsist_polution_db)
-    # EPA_polution_db = load_db(db, table_name="AirDataTable")
-    # ncsist_polution_db = load_db(db, table_name="ncsist_data")
-
-    # ncsist_polution_data = db_to_dict(ncsist_polution_db)
-
-    exit()
+# if __name__ == "__main__":
+#
+#     # ncsist_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a888701/AirQuality/dataset/PM25Data_forAI_0903-0930"
+#     # ncsist_data_dir = "/media/clliao/006a3168-df49-4b0a-a874-891877a888701/AirQuality/dataset/PM25Data_forAI_1001-1023"
+#     #
+#     # ncsist_polution_db = local_data_reader(ncsist_data_dir)
+#     # print("total data: %d" % len(ncsist_polution_db))
+#
+#     # connect MySQL
+#     print("connect db .. ")
+#     db = MySQLdb.connect(host=db_config["host"],
+#                          user=db_config["user"], passwd=db_config["passwd"], db=db_config["db"])
+#
+#     # insert_to_db(db, insert_data=ncsist_polution_db)
+#     EPA_polution_db = load_db(db, table_name="AirDataTable")
+#     ncsist_polution_db = load_db(db, table_name="AirDataTableNcsist")
+#     # ncsist_polution_db = load_db(db, table_name="ncsist_data")
+#
+#     # ncsist_polution_data = db_to_dict(ncsist_polution_db)
+#
+#     exit()

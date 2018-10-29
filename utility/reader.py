@@ -359,6 +359,7 @@ def label_exist_check(feature_selection, table_label):
 # global or local, once each time
 def read_global_or_local_data_map(site, feature_selection, date_range=[2014, 2015],
                          beginning='1/1', finish='12/31', table_name="ncsist_data", path='None'):
+
     # path: 'db' or filepath
     # load data from files
     # -------------------
@@ -681,7 +682,20 @@ def create_map(year, month, day, each_hour, each_minute, site, y_d_h_data, featu
                     feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
                     num_of_missing += 1
                     total_number += 1
-
+            # elif feature_elem == "PM2_5":
+            #     # too large value of PM2.5 is outlier.
+            #     try:
+            #         feature = float(y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
+            #                         [feature_elem])
+            #         if np.isnan(feature) or feature < 0 or feature > 110:
+            #             feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+            #             total_number += 1
+            #         else:
+            #             feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = feature
+            #             total_number += 1
+            #     except:
+            #         feature_tensor[map_index[0], map_index[1], (5 + feature_index)] = nan_signal
+            #         total_number += 1
             else:
                 try:
                     feature = float(y_d_h_data[site_name][str(year)][each_date][str(each_hour)][str(each_minute)][0]
@@ -703,7 +717,10 @@ def create_map(year, month, day, each_hour, each_minute, site, y_d_h_data, featu
 
 
 def read_hybrid_data_map(site, feature_selection, date_range=[2014, 2015],
-                         beginning='1/1', finish='12/31', path='None', global_site_lock="龍潭"):
+                         beginning='1/1', finish='12/31', path='None', global_site_lock="龍潭",
+                         hour = None, seq_length = None):
+    # parameter hour and seq_length is for catching predict data
+
     # lock site of global to "龍潭"
 
     # check forms of parameter
@@ -755,7 +772,9 @@ def read_hybrid_data_map(site, feature_selection, date_range=[2014, 2015],
         time_range = ["%d-%s-%s" % (date_range[0], beginning.split('/')[0], beginning.split('/')[1]),
                       "%d-%s-%s" % (date_range[-1], finish.split('/')[0], finish.split('/')[1])]
         time_range = [str(datetime.datetime.strptime(time_point, "%Y-%m-%d").date()) for time_point in time_range]
-
+        if hour:
+            end_time = datetime.datetime.strptime(time_range[-1], "%Y-%m-%d") + datetime.timedelta(hours=float(hour))
+            start_time = end_time - datetime.timedelta(hours=float(seq_length))
         print("connect db .. ")
         db = MySQLdb.connect(host=db_config["host"],
                              user=db_config["user"], passwd=db_config["passwd"], db=db_config["db"])
@@ -771,7 +790,8 @@ def read_hybrid_data_map(site, feature_selection, date_range=[2014, 2015],
         EPA_dict = db_to_dict(EPA_db)
 
         # ncsist
-        table_name = "ncsist_data"
+        # table_name = "ncsist_data"
+        table_name = "AirDataTableNcsist"
         ncsist_db = load_db(db, table_name=table_name, time_range=time_range)
 
         if not len(ncsist_db):
@@ -832,6 +852,10 @@ def read_hybrid_data_map(site, feature_selection, date_range=[2014, 2015],
                 # -----------------------
 
                 for each_hour in range(24):
+                    if hour:
+                        now = datetime.datetime(year, month, day + 1, each_hour)
+                        if not time_in_range(start_time, end_time, now):
+                            continue
                     for each_minute in range(60):
                         # missing check ----------------------------------------------------------------un-finish
                         # ---------------------------
@@ -1035,6 +1059,14 @@ def read_data_sets(sites=['中山', '古亭', '士林', '松山', '萬華'], dat
 """
 
 
+def time_in_range(start, end, x):
+    """Return true if x is in the range [start, end]"""
+    if start <= end:
+        return start <= x <= end
+    else:
+        return start <= x or x <= end
+
+
 def concatenate_time_steps(X, n_steps):
     # input X should be a 2d-array
     # output Y will be a 3d-array
@@ -1075,6 +1107,34 @@ def construct_time_map2(X, train_seq_seg):
     length = len(X) - train_seq_seg[-1][0]
     Y = []
     for i in range(length):
+        y = []
+        for j in range(len(train_seq_seg) - 1):
+            seg_idx = len(train_seq_seg) - j - 1
+            sum_for_avg = 0
+            for idx in range(train_seq_seg[seg_idx][0], train_seq_seg[seg_idx-1][0], -1):
+                sum_for_avg += X[i + train_seq_seg[-1][0] - idx]
+                if (idx-1) % train_seq_seg[seg_idx][1] == 0:
+                    y.append(sum_for_avg / train_seq_seg[seg_idx][1])
+                    sum_for_avg = 0
+        sum_for_avg = 0
+        for idx in range(train_seq_seg[0][0], 0, -1):
+            sum_for_avg += X[i + train_seq_seg[-1][0] - idx]
+            if (idx-1) % train_seq_seg[0][1] == 0:
+                y.append(sum_for_avg / train_seq_seg[0][1])
+                sum_for_avg = 0
+        Y.append(y)
+    return np.array(Y)
+
+
+def construct_time_map_without_label(X, train_seq_seg, time_unit=1):
+    # create time series
+    # X: input 4d-tensor
+    # train_seq_seg: e.g., [(6, 1), (24, 2), (48, 3), (96, 6), (192, 12)]
+    # Y: output 5d-tensor
+    # y are the elements of Y
+    length = len(X) - train_seq_seg[-1][0]
+    Y = []
+    for i in range(0, length, time_unit):
         y = []
         for j in range(len(train_seq_seg) - 1):
             seg_idx = len(train_seq_seg) - j - 1

@@ -79,3 +79,18 @@ def missing_recover(X, index, k=3):
     # tt = X[index, nan_index[0], nan_index[1]]
 
     return X
+
+
+def drop_missing(data):
+    """
+
+    :param data: list or ndarray. Every row express one record in whole data.
+    :return: a list of index of data where not contain nan.
+    """
+    remain_list = []
+    for i in range(len(data)):
+        # Check missing or not, if not nan in data[i], then this command will return True.
+        if not np.isnan(np.sum(data[i])):
+            remain_list.append(i)
+
+    return remain_list
